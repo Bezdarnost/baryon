@@ -16,6 +16,7 @@
 
 mod codecs;
 mod error;
+mod executor;
 mod format;
 mod geometry;
 mod image;
@@ -24,6 +25,7 @@ mod plan;
 
 pub use codecs::{ImageInfo, RegionStrategy, RegionSupport};
 pub use error::{BoxError, Error, Result};
+pub use executor::Executor;
 pub use format::ImageFormat;
 pub use geometry::{Orientation, Rect, Rotation};
 pub use image::{ColorType, Image, PixelBuffer, SampleType};

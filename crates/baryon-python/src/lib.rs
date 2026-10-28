@@ -2,20 +2,22 @@
 //!
 //! The Python-facing `Image` is an immutable handle to a lazy pipeline: every transformation
 //! returns a new handle, and pixels are only produced by `to_numpy()` / `numpy.asarray()`. All
-//! decoding and processing runs with the GIL released.
+//! decoding and processing runs with the GIL released, on a process-wide thread pool.
 
 // Doc comments here become Python docstrings, written in reST/Google style rather than rustdoc.
 #![allow(clippy::doc_markdown)]
 
 use std::path::PathBuf;
+use std::sync::{PoisonError, RwLock};
 
-use baryon_core::{Error, Image, LazyImage, PixelBuffer, Rect, ResizeFilter, Rotation};
+use baryon_core::{Error, Executor, Image, LazyImage, PixelBuffer, Rect, ResizeFilter, Rotation};
 use numpy::IntoPyArray;
 use numpy::ndarray::{Array3, ShapeError};
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
 use pyo3::{create_exception, intern};
+use rayon::prelude::*;
 
 create_exception!(
     baryon,
@@ -48,12 +50,103 @@ fn to_py_err(err: Error) -> PyErr {
     }
 }
 
+/// Converts the error for item `index` of a batch, keeping its exception type and prefixing
+/// the message with the position, e.g. ``images[3]: failed to decode ...``.
+fn to_py_err_at(py: Python<'_>, what: &str, index: usize, err: Error) -> PyErr {
+    let err = to_py_err(err);
+    let message = format!("{what}[{index}]: {}", err.value(py));
+    match err.get_type(py).call1((message,)) {
+        Ok(value) => PyErr::from_value(value),
+        Err(failed) => failed,
+    }
+}
+
+/// The process-wide executor, tagged with the id of the process that created it.
+static EXECUTOR: RwLock<Option<(u32, Executor)>> = RwLock::new(None);
+
+/// Returns the shared executor, creating it on first use.
+///
+/// Thread pools do not survive `fork()`: a child process inherits the pool but not its threads,
+/// so using it would hang. This matters for PyTorch `DataLoader` workers and `multiprocessing`
+/// on Linux, so a forked child transparently gets a fresh pool.
+fn executor() -> PyResult<Executor> {
+    let pid = std::process::id();
+    if let Some((owner, executor)) = EXECUTOR
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+        && *owner == pid
+    {
+        return Ok(executor.clone());
+    }
+    let mut slot = EXECUTOR.write().unwrap_or_else(PoisonError::into_inner);
+    match slot.take() {
+        Some((owner, executor)) if owner == pid => {
+            *slot = Some((owner, executor.clone()));
+            return Ok(executor);
+        }
+        // Inherited across fork: its worker threads do not exist here, and dropping it could
+        // block on them, so it is leaked deliberately.
+        Some((_, stale)) => std::mem::forget(stale),
+        None => {}
+    }
+    let executor = Executor::new(threads_from_env()?).map_err(to_py_err)?;
+    *slot = Some((pid, executor.clone()));
+    Ok(executor)
+}
+
+fn threads_from_env() -> PyResult<usize> {
+    match std::env::var("BARYON_NUM_THREADS") {
+        Err(_) => Ok(0),
+        Ok(value) => value.trim().parse().map_err(|_| {
+            PyValueError::new_err(format!(
+                "BARYON_NUM_THREADS must be a non-negative integer, got {value:?}"
+            ))
+        }),
+    }
+}
+
+/// Sets the number of threads baryon uses for decoding and processing.
+///
+/// The setting covers everything baryon runs: batch functions such as :func:`to_numpy_all`
+/// spread images across threads, and a single large image is split across threads where the
+/// format and operations allow it (JPEG XL decoding, resize, crop, rotate and flip).
+///
+/// The initial value comes from the ``BARYON_NUM_THREADS`` environment variable, defaulting to
+/// one thread per logical CPU.
+///
+/// Args:
+///     num_threads: Number of threads; ``None`` or ``0`` means one per logical CPU.
+#[pyfunction]
+#[pyo3(signature = (num_threads = None))]
+fn set_num_threads(num_threads: Option<usize>) -> PyResult<()> {
+    let executor = Executor::new(num_threads.unwrap_or(0)).map_err(to_py_err)?;
+    *EXECUTOR.write().unwrap_or_else(PoisonError::into_inner) =
+        Some((std::process::id(), executor));
+    Ok(())
+}
+
+/// Returns the number of threads baryon uses; see :func:`set_num_threads`.
+#[pyfunction]
+fn get_num_threads() -> PyResult<usize> {
+    Ok(executor()?.num_threads())
+}
+
 /// Where to read an image from.
 enum Input {
     /// Encoded bytes from any object supporting the buffer protocol.
     Data(Vec<u8>),
     /// A filesystem path.
     Path(PathBuf),
+}
+
+impl Input {
+    fn open(self) -> baryon_core::Result<LazyImage> {
+        match self {
+            Self::Data(data) => LazyImage::from_bytes(data),
+            Self::Path(path) => LazyImage::open(path),
+        }
+    }
 }
 
 impl<'a, 'py> FromPyObject<'a, 'py> for Input {
@@ -90,13 +183,73 @@ impl<'a, 'py> FromPyObject<'a, 'py> for Input {
 ///     OSError: The file could not be read.
 #[pyfunction]
 fn open(py: Python<'_>, source: Input) -> PyResult<PyImage> {
-    let inner = py
-        .detach(|| match source {
-            Input::Data(data) => LazyImage::from_bytes(data),
-            Input::Path(path) => LazyImage::open(path),
-        })
-        .map_err(to_py_err)?;
+    let inner = py.detach(|| source.open()).map_err(to_py_err)?;
     Ok(PyImage { inner })
+}
+
+/// Opens many images lazily, reading files and parsing headers in parallel.
+///
+/// Equivalent to ``[open(s) for s in sources]``, but faster for many files.
+///
+/// Args:
+///     sources: File paths and/or bytes-like objects, as accepted by :func:`open`.
+///
+/// Raises:
+///     The first error any source raises in :func:`open`, with its position prefixed to the
+///     message, e.g. ``sources[3]: ...``.
+#[pyfunction]
+fn open_all(py: Python<'_>, sources: Vec<Input>) -> PyResult<Vec<PyImage>> {
+    let executor = executor()?;
+    let opened: Vec<_> =
+        py.detach(|| executor.install(|| sources.into_par_iter().map(Input::open).collect()));
+    opened
+        .into_iter()
+        .enumerate()
+        .map(|(index, result)| {
+            result
+                .map(PyImage::from)
+                .map_err(|err| to_py_err_at(py, "sources", index, err))
+        })
+        .collect()
+}
+
+/// Decodes many images in parallel and returns their pixels.
+///
+/// Equivalent to ``[image.to_numpy() for image in images]``, but runs on all of baryon's
+/// threads (see :func:`set_num_threads`) with the GIL released once for the whole batch.
+///
+/// Args:
+///     images: Images from :func:`open` or :func:`open_all`, with any pending transformations.
+///
+/// Returns:
+///     One ``(height, width, channels)`` array per image, in input order.
+///
+/// Raises:
+///     The first error any image raises in :meth:`Image.to_numpy`, with its position prefixed
+///     to the message, e.g. ``images[3]: ...``.
+#[pyfunction]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "PyO3 extracts sequence arguments into an owned Vec"
+)]
+fn to_numpy_all<'py>(
+    py: Python<'py>,
+    images: Vec<Bound<'py, PyImage>>,
+) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    let executor = executor()?;
+    let pipelines: Vec<LazyImage> = images
+        .iter()
+        .map(|image| image.get().inner.clone())
+        .collect();
+    let decoded = py.detach(|| executor.execute_all(&pipelines));
+    decoded
+        .into_iter()
+        .enumerate()
+        .map(|(index, result)| {
+            let image = result.map_err(|err| to_py_err_at(py, "images", index, err))?;
+            into_ndarray(py, image)
+        })
+        .collect()
 }
 
 /// A lazily decoded image.
@@ -256,12 +409,17 @@ impl PyImage {
     /// Decodes the image, applies all pending transformations and returns the pixels.
     ///
     /// The array always has shape ``(height, width, channels)`` and dtype ``uint8`` or
-    /// ``uint16``; see :attr:`shape` and :attr:`dtype`. The GIL is released while decoding.
+    /// ``uint16``; see :attr:`shape` and :attr:`dtype`. The GIL is released while decoding, and
+    /// large images use several threads where possible (see :func:`set_num_threads`). For many
+    /// images, :func:`to_numpy_all` is faster.
     ///
     /// Raises:
     ///     DecodeError: The image data is corrupt.
     fn to_numpy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let image = py.detach(|| self.inner.execute()).map_err(to_py_err)?;
+        let executor = executor()?;
+        let image = py
+            .detach(|| executor.execute(&self.inner))
+            .map_err(to_py_err)?;
         into_ndarray(py, image)
     }
 
@@ -337,6 +495,10 @@ fn _baryon(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     m.add_class::<PyImage>()?;
     m.add_function(wrap_pyfunction!(open, m)?)?;
+    m.add_function(wrap_pyfunction!(open_all, m)?)?;
+    m.add_function(wrap_pyfunction!(to_numpy_all, m)?)?;
+    m.add_function(wrap_pyfunction!(set_num_threads, m)?)?;
+    m.add_function(wrap_pyfunction!(get_num_threads, m)?)?;
     m.add("BaryonError", py.get_type::<BaryonError>())?;
     m.add("DecodeError", py.get_type::<DecodeError>())?;
     m.add(

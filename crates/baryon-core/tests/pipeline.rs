@@ -132,6 +132,38 @@ fn geometric_pipelines_match_naive_execution() {
     check_random_pipelines(false, 0x5EED_0001);
 }
 
+/// Large enough that crops and orientations are split across threads.
+#[test]
+fn parallel_geometry_matches_naive_execution() {
+    let source = LazyImage::from_bytes(coordinate_png(700, 500)).unwrap();
+    let full = source.execute().unwrap();
+    let pipelines = [
+        source.rotate(Rotation::Cw90),
+        source.flip_horizontal().rotate(Rotation::Cw270),
+        source
+            .resize(350, 250, ResizeFilter::Bilinear)
+            .unwrap()
+            .flip_vertical(),
+        source
+            .resize(640, 480, ResizeFilter::Nearest)
+            .unwrap()
+            .crop(Rect::new(10, 20, 600, 400))
+            .unwrap()
+            .rotate(Rotation::Cw180),
+    ];
+    for image in pipelines {
+        let expected = image
+            .ops()
+            .iter()
+            .fold(full.clone(), |img, &op| naive(&img, op));
+        assert!(
+            image.execute().unwrap() == expected,
+            "{}",
+            image.explain(false)
+        );
+    }
+}
+
 #[test]
 fn pipelines_with_resize_match_naive_execution() {
     check_random_pipelines(true, 0x5EED_0002);

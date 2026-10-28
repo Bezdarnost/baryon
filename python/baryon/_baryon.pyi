@@ -1,4 +1,5 @@
 import os
+from collections.abc import Sequence
 from typing import Any, Literal, TypeAlias, final
 
 import numpy as np
@@ -22,8 +23,22 @@ class DecodeError(BaryonError):
 class UnsupportedFormatError(BaryonError):
     """The image format is not recognized or not supported by this build."""
 
-def open(source: str | os.PathLike[str] | bytes | bytearray | memoryview) -> Image:
+Source: TypeAlias = str | os.PathLike[str] | bytes | bytearray | memoryview
+
+def open(source: Source) -> Image:
     """Open an image lazily; only the header is parsed."""
+
+def open_all(sources: Sequence[Source]) -> list[Image]:
+    """Open many images lazily, reading files and parsing headers in parallel."""
+
+def to_numpy_all(images: Sequence[Image]) -> list[npt.NDArray[np.uint8] | npt.NDArray[np.uint16]]:
+    """Decode many images in parallel; one ``(H, W, C)`` array per image, in input order."""
+
+def set_num_threads(num_threads: int | None = None) -> None:
+    """Set the number of threads baryon uses; ``None`` or ``0`` means one per logical CPU."""
+
+def get_num_threads() -> int:
+    """Return the number of threads baryon uses."""
 
 @final
 class Image:

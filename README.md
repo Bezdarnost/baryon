@@ -49,8 +49,17 @@ How it works:
   codec uses whatever partial decoding its format allows, and the executor trims the rest.
 - **Zero-copy NumPy.** Decoded buffers are moved into NumPy arrays without copying. Arrays are
   always `(height, width, channels)` with dtype `uint8` or `uint16`.
+- **All cores.** Batches are decoded in parallel with `baryon.to_numpy_all`, and a single large
+  image is split across threads where possible (JPEG XL decoding, resize, crop, rotate, flip).
+  One setting, `baryon.set_num_threads(n)` or `BARYON_NUM_THREADS`, bounds all of it, and
+  forked worker processes (PyTorch `DataLoader`, `multiprocessing`) get a fresh thread pool.
 - **Free-threading ready.** All work runs with the GIL released, and the extension declares
   free-threaded support.
+
+```python
+images = baryon.open_all(paths)  # read files and parse headers in parallel
+batch = baryon.to_numpy_all([im.crop(0, 0, 512, 512) for im in images])  # decode on all cores
+```
 
 > [!WARNING]
 > **`rotate()` turns clockwise by default**, like CSS and photo viewers. This is the opposite
@@ -112,6 +121,7 @@ crates/baryon-core     pure-Rust engine: codecs, lazy plans, optimizer, ops
 crates/baryon-python   PyO3 bindings (the baryon._baryon extension module)
 python/baryon          Python package: public API and type stubs
 tests/python           Python test suite
+benchmarks             reproducible comparisons with other libraries
 ```
 
 ## License

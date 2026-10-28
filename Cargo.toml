@@ -13,11 +13,12 @@ authors = ["Aman Urumbekov <amanurumbekov@gmail.com>"]
 [workspace.dependencies]
 baryon-core = { path = "crates/baryon-core", version = "0.1.0" }
 bytemuck = "1.23"
-fast_image_resize = "6.1"
+fast_image_resize = { version = "6.1", features = ["rayon"] }
 jxl-oxide = { version = "0.12", default-features = false, features = ["moxcms", "rayon"] }
 numpy = "0.30"
 png = "0.18"
 pyo3 = "0.30"
+rayon = "1.10"
 thiserror = "2.0"
 zune-core = "0.5"
 zune-jpeg = "0.5"

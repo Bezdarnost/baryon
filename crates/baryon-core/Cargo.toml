@@ -13,6 +13,7 @@ bytemuck.workspace = true
 fast_image_resize.workspace = true
 jxl-oxide.workspace = true
 png.workspace = true
+rayon.workspace = true
 thiserror.workspace = true
 zune-core.workspace = true
 zune-jpeg.workspace = true

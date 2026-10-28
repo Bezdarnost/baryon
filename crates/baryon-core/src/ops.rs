@@ -4,6 +4,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use fast_image_resize::{self as fir, FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
+use rayon::prelude::*;
 
 use crate::error::{Error, Result};
 use crate::geometry::{Orientation, Rect, Rotation};
@@ -146,10 +147,13 @@ pub fn crop(image: &Image, rect: Rect) -> Result<Image> {
     let mut out = Image::zeroed(rect.width, rect.height, image.color(), image.sample_type())?;
     let src = image.pixels().as_bytes();
     let dst = out.pixels_mut().as_bytes_mut();
-    for (row, dst_row) in dst.chunks_exact_mut(row_len).enumerate() {
-        let start = (rect.y as usize + row) * src_stride + x_offset;
-        dst_row.copy_from_slice(&src[start..start + row_len]);
-    }
+    dst.par_chunks_exact_mut(row_len)
+        .with_min_len(rows_per_task(row_len))
+        .enumerate()
+        .for_each(|(row, dst_row)| {
+            let start = (rect.y as usize + row) * src_stride + x_offset;
+            dst_row.copy_from_slice(&src[start..start + row_len]);
+        });
     Ok(out)
 }
 
@@ -167,14 +171,25 @@ pub fn orient(image: Image, orientation: Orientation) -> Result<Image> {
     let src = image.pixels().as_bytes();
     let dst_stride = out.row_stride();
     let dst = out.pixels_mut().as_bytes_mut();
-    for (y, dst_row) in (0..oh).zip(dst.chunks_exact_mut(dst_stride)) {
-        for (x, dst_px) in (0..ow).zip(dst_row.chunks_exact_mut(bpp)) {
-            let (u, v) = orientation.source_pixel(x, y, sw, sh);
-            let start = v as usize * src_stride + u as usize * bpp;
-            dst_px.copy_from_slice(&src[start..start + bpp]);
-        }
-    }
+    (0..oh)
+        .into_par_iter()
+        .zip(dst.par_chunks_exact_mut(dst_stride))
+        .with_min_len(rows_per_task(dst_stride))
+        .for_each(|(y, dst_row)| {
+            for (x, dst_px) in (0..ow).zip(dst_row.chunks_exact_mut(bpp)) {
+                let (u, v) = orientation.source_pixel(x, y, sw, sh);
+                let start = v as usize * src_stride + u as usize * bpp;
+                dst_px.copy_from_slice(&src[start..start + bpp]);
+            }
+        });
     Ok(out)
+}
+
+/// Rows handed to one parallel task: enough bytes that scheduling overhead stays negligible,
+/// so small images are processed on a single thread.
+fn rows_per_task(row_bytes: usize) -> usize {
+    const BYTES_PER_TASK: usize = 256 * 1024;
+    (BYTES_PER_TASK / row_bytes.max(1)).max(1)
 }
 
 /// Resamples `image` to `width` x `height`. Alpha channels are handled premultiplied.
