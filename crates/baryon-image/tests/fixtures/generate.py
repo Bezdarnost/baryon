@@ -4,7 +4,7 @@ The fixtures are committed so the test suites need no encoders. Run this only wh
 changing fixtures:
 
     uv run --no-project --with numpy --with imagecodecs --with pypng \
-        python crates/baryon-core/tests/fixtures/generate.py
+        python crates/baryon-image/tests/fixtures/generate.py
 
 JPEG XL files are written by libjxl (through imagecodecs), the reference encoder, so decoding
 them exercises the same bitstream features real-world files use. Every image is defined by a

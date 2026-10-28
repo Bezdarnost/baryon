@@ -2,12 +2,21 @@
 
 use std::fmt;
 
-/// An image container format baryon knows how to recognize.
-///
-/// Recognizing a format does not imply it can be decoded; see [`ImageFormat::is_decodable`].
+/// The kind of media a container holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum ImageFormat {
+pub enum MediaType {
+    /// Still images.
+    Image,
+}
+
+/// A container format baryon recognizes from its signature.
+///
+/// Recognizing a format does not imply it can be decoded; the media crates report which
+/// formats they support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Format {
     /// JPEG (JFIF / EXIF).
     Jpeg,
     /// Portable Network Graphics.
@@ -18,7 +27,7 @@ pub enum ImageFormat {
     Avif,
 }
 
-impl ImageFormat {
+impl Format {
     /// Detects the format from the leading bytes of a file.
     ///
     /// Only the signature is inspected, so this never fails on truncated data as long as the
@@ -51,13 +60,15 @@ impl ImageFormat {
         }
     }
 
-    /// Whether this build can decode the format.
-    pub const fn is_decodable(self) -> bool {
-        matches!(self, Self::Jpeg | Self::Png | Self::JpegXl)
+    /// The kind of media this format holds.
+    pub const fn media_type(self) -> MediaType {
+        match self {
+            Self::Jpeg | Self::Png | Self::JpegXl | Self::Avif => MediaType::Image,
+        }
     }
 }
 
-impl fmt::Display for ImageFormat {
+impl fmt::Display for Format {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
     }
@@ -92,39 +103,40 @@ mod tests {
     #[test]
     fn detects_signatures() {
         assert_eq!(
-            ImageFormat::detect(&[0xFF, 0xD8, 0xFF, 0xE0]),
-            Some(ImageFormat::Jpeg)
+            Format::detect(&[0xFF, 0xD8, 0xFF, 0xE0]),
+            Some(Format::Jpeg)
         );
+        assert_eq!(Format::detect(b"\x89PNG\r\n\x1a\n\0\0"), Some(Format::Png));
+        assert_eq!(Format::detect(&[0xFF, 0x0A, 0x00]), Some(Format::JpegXl));
         assert_eq!(
-            ImageFormat::detect(b"\x89PNG\r\n\x1a\n\0\0"),
-            Some(ImageFormat::Png)
-        );
-        assert_eq!(
-            ImageFormat::detect(&[0xFF, 0x0A, 0x00]),
-            Some(ImageFormat::JpegXl)
-        );
-        assert_eq!(
-            ImageFormat::detect(b"\x00\x00\x00\x0cJXL \r\n\x87\n\0"),
-            Some(ImageFormat::JpegXl)
+            Format::detect(b"\x00\x00\x00\x0cJXL \r\n\x87\n\0"),
+            Some(Format::JpegXl)
         );
     }
 
     #[test]
     fn detects_avif_by_major_and_compatible_brand() {
         let major = b"\x00\x00\x00\x14ftypavif\x00\x00\x00\x00mif1";
-        assert_eq!(ImageFormat::detect(major), Some(ImageFormat::Avif));
+        assert_eq!(Format::detect(major), Some(Format::Avif));
 
         let compatible = b"\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00miafavif";
-        assert_eq!(ImageFormat::detect(compatible), Some(ImageFormat::Avif));
+        assert_eq!(Format::detect(compatible), Some(Format::Avif));
 
         let heic = b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic";
-        assert_eq!(ImageFormat::detect(heic), None);
+        assert_eq!(Format::detect(heic), None);
     }
 
     #[test]
     fn rejects_garbage_and_short_input() {
-        assert_eq!(ImageFormat::detect(b""), None);
-        assert_eq!(ImageFormat::detect(b"GIF89a"), None);
-        assert_eq!(ImageFormat::detect(&[0xFF, 0xD8]), None);
+        assert_eq!(Format::detect(b""), None);
+        assert_eq!(Format::detect(b"GIF89a"), None);
+        assert_eq!(Format::detect(&[0xFF, 0xD8]), None);
+    }
+
+    #[test]
+    fn every_format_is_an_image_today() {
+        for format in [Format::Jpeg, Format::Png, Format::JpegXl, Format::Avif] {
+            assert_eq!(format.media_type(), MediaType::Image);
+        }
     }
 }

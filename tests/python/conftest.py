@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
     Encoder = Callable[..., bytes]
 
-FIXTURES = Path(__file__).parents[2] / "crates" / "baryon-core" / "tests" / "fixtures"
+FIXTURES = Path(__file__).parents[2] / "crates" / "baryon-image" / "tests" / "fixtures"
 
 
 def gradient(width: int, height: int, channels: int = 3) -> npt.NDArray[np.uint8]:

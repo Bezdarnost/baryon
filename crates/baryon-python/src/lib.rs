@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 use std::sync::{PoisonError, RwLock};
 
-use baryon_core::{Error, Executor, Image, LazyImage, PixelBuffer, Rect, ResizeFilter, Rotation};
+use baryon_image::{Error, Executor, Image, LazyImage, PixelBuffer, Rect, ResizeFilter, Rotation};
 use numpy::IntoPyArray;
 use numpy::ndarray::{Array3, ShapeError};
 use pyo3::buffer::PyBuffer;
@@ -141,7 +141,7 @@ enum Input {
 }
 
 impl Input {
-    fn open(self) -> baryon_core::Result<LazyImage> {
+    fn open(self) -> baryon_image::Result<LazyImage> {
         match self {
             Self::Data(data) => LazyImage::from_bytes(data),
             Self::Path(path) => LazyImage::open(path),
@@ -240,7 +240,7 @@ fn to_numpy_all<'py>(
         .iter()
         .map(|image| image.get().inner.clone())
         .collect();
-    let decoded = py.detach(|| executor.execute_all(&pipelines));
+    let decoded = py.detach(|| LazyImage::execute_all(&executor, &pipelines));
     decoded
         .into_iter()
         .enumerate()
@@ -416,7 +416,7 @@ impl PyImage {
     fn to_numpy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let executor = executor()?;
         let image = py
-            .detach(|| executor.execute(&self.inner))
+            .detach(|| self.inner.execute_on(&executor))
             .map_err(to_py_err)?;
         into_ndarray(py, image)
     }

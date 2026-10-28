@@ -12,16 +12,16 @@ mod png;
 
 use std::fmt;
 
-use crate::error::{Error, Result};
-use crate::format::ImageFormat;
 use crate::geometry::Rect;
 use crate::image::{ColorType, Image, SampleType};
+use baryon_core::Format;
+use baryon_core::{Error, Result};
 
 /// Header-level facts about an encoded image, known without decoding pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageInfo {
     /// Container format.
-    pub format: ImageFormat,
+    pub format: Format,
     /// Width in pixels.
     pub width: u32,
     /// Height in pixels.
@@ -120,14 +120,19 @@ pub(crate) trait Codec: Sync {
 }
 
 /// Returns the codec for `format`, or an error if this build cannot decode it.
-pub(crate) fn codec_for(format: ImageFormat) -> Result<&'static dyn Codec> {
+pub(crate) fn codec_for(format: Format) -> Result<&'static dyn Codec> {
     match format {
-        ImageFormat::Jpeg => Ok(&jpeg::JpegCodec),
-        ImageFormat::Png => Ok(&png::PngCodec),
-        ImageFormat::JpegXl => Ok(&jxl::JxlCodec),
-        ImageFormat::Avif => Err(Error::Unsupported {
+        Format::Jpeg => Ok(&jpeg::JpegCodec),
+        Format::Png => Ok(&png::PngCodec),
+        Format::JpegXl => Ok(&jxl::JxlCodec),
+        Format::Avif => Err(Error::Unsupported {
             format,
             reason: "AVIF decoding is planned but not implemented yet",
+        }),
+        // Formats of other media types, added as baryon grows beyond images.
+        _ => Err(Error::Unsupported {
+            format,
+            reason: "not an image format",
         }),
     }
 }

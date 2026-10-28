@@ -1,6 +1,6 @@
-//! Error type shared by every part of the engine.
+//! Error type shared by every media type.
 
-use crate::format::ImageFormat;
+use crate::format::Format;
 
 /// Convenience alias for results produced by this crate.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -8,34 +8,34 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// Boxed error from a codec backend, kept as the [`std::error::Error::source`] of [`Error::Decode`].
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
-/// Everything that can go wrong while opening, planning or decoding an image.
+/// Everything that can go wrong while opening, planning or decoding media.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// The input does not start with the signature of any known image format.
-    #[error("unrecognized image format")]
+    /// The input does not start with the signature of any known format.
+    #[error("unrecognized format")]
     UnrecognizedFormat,
 
     /// The format was recognized but cannot be decoded (yet).
     #[error("{format} is not supported: {reason}")]
     Unsupported {
         /// The detected container format.
-        format: ImageFormat,
+        format: Format,
         /// Human-readable explanation.
         reason: &'static str,
     },
 
     /// The codec backend rejected the data.
-    #[error("failed to decode {format} image: {source}")]
+    #[error("failed to decode {format} data: {source}")]
     Decode {
         /// The format whose decoder failed.
-        format: ImageFormat,
+        format: Format,
         /// The backend error.
         #[source]
         source: BoxError,
     },
 
-    /// A transformation was requested with arguments that make no sense for the image.
+    /// An operation was requested with arguments that do not fit the input.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 
@@ -49,7 +49,8 @@ pub enum Error {
 }
 
 impl Error {
-    pub(crate) fn decode(format: ImageFormat, source: impl Into<BoxError>) -> Self {
+    /// Builds [`Error::Decode`] from any error-like value, including strings.
+    pub fn decode(format: Format, source: impl Into<BoxError>) -> Self {
         Self::Decode {
             format,
             source: source.into(),

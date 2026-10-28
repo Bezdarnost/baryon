@@ -9,10 +9,10 @@ use std::io::Cursor;
 use png::{BitDepth, Decoder, Limits, Reader, Transformations};
 
 use super::{Codec, Decoded, ImageInfo, RegionSupport};
-use crate::error::{Error, Result};
-use crate::format::ImageFormat;
 use crate::geometry::Rect;
 use crate::image::{ColorType, Image, PixelBuffer, SampleType};
+use baryon_core::Format;
+use baryon_core::{Error, Result};
 
 /// PNG and the first frame of APNG.
 pub(crate) struct PngCodec;
@@ -47,7 +47,7 @@ impl Codec for PngCodec {
         };
         let info = reader.info();
         Ok(ImageInfo {
-            format: ImageFormat::Png,
+            format: Format::Png,
             width: info.width,
             height: info.height,
             color,
@@ -94,7 +94,7 @@ impl Codec for PngCodec {
 fn decode_full(reader: &mut Reader<Cursor<&[u8]>>, info: &ImageInfo) -> Result<Decoded> {
     let size = reader
         .output_buffer_size()
-        .ok_or_else(|| Error::decode(ImageFormat::Png, "image is too large to decode"))?;
+        .ok_or_else(|| Error::decode(Format::Png, "image is too large to decode"))?;
     let mut raw = vec![0; size];
     let frame = reader.next_frame(&mut raw).map_err(png_error)?;
     raw.truncate(frame.buffer_size());
@@ -136,14 +136,11 @@ fn be_to_u16(raw: &[u8]) -> Vec<u16> {
 }
 
 fn truncated(row: u64) -> Error {
-    Error::decode(
-        ImageFormat::Png,
-        format!("image data ended before row {row}"),
-    )
+    Error::decode(Format::Png, format!("image data ended before row {row}"))
 }
 
 fn png_error(err: png::DecodingError) -> Error {
-    Error::decode(ImageFormat::Png, err)
+    Error::decode(Format::Png, err)
 }
 
 #[cfg(test)]

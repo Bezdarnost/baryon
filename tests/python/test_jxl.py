@@ -1,4 +1,4 @@
-"""JPEG XL decoding, using fixtures written by libjxl (see crates/baryon-core/tests/fixtures)."""
+"""JPEG XL decoding, using fixtures written by libjxl (see crates/baryon-image/tests/fixtures)."""
 
 from __future__ import annotations
 

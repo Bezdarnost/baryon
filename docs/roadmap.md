@@ -14,6 +14,12 @@ Everything is built on three layers, so new media types reuse what exists:
 | **Lazy plans** | record operations, optimize, push work into decoders | crop, flip, rotate, resize |
 | **Execution** | one thread pool, batches, zero-copy NumPy output | `to_numpy`, `to_numpy_all` |
 
+In code, the shared runtime (errors, format detection with a media type per format, and the
+thread-pool executor) is the `baryon-core` crate. Each media type is its own crate on top of
+it: `baryon-image` today, `baryon-video` and `baryon-audio` later. In Python, images stay at
+the top level (`baryon.open`, `baryon.Image`), and video and audio will live in
+`baryon.video` and `baryon.audio`, sharing the same thread pool and conventions.
+
 A video adds a time axis to the same model: a frame range is to a video what a crop is to an
 image, so seeking to a keyframe is "region pushdown" in time. Audio is a one-dimensional
 signal where time ranges and resampling play the role of crops and resizes.

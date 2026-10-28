@@ -6,9 +6,9 @@ use std::str::FromStr;
 use fast_image_resize::{self as fir, FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use rayon::prelude::*;
 
-use crate::error::{Error, Result};
 use crate::geometry::{Orientation, Rect, Rotation};
 use crate::image::{ColorType, Image, SampleType};
+use baryon_core::{Error, Result};
 
 /// A single transformation recorded in a lazy pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

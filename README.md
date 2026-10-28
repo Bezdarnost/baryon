@@ -129,7 +129,8 @@ uv run mypy
 ### Layout
 
 ```
-crates/baryon-core     pure-Rust engine: codecs, lazy plans, optimizer, ops
+crates/baryon-core     media-agnostic runtime: errors, format detection, thread-pool executor
+crates/baryon-image    images: codecs, lazy plans, optimizer, operations, batches
 crates/baryon-python   PyO3 bindings (the baryon._baryon extension module)
 python/baryon          Python package: public API and type stubs
 tests/python           Python test suite

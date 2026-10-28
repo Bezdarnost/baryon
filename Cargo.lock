@@ -132,13 +132,21 @@ dependencies = [
 name = "baryon-core"
 version = "0.1.0"
 dependencies = [
+ "rayon",
+ "thiserror",
+]
+
+[[package]]
+name = "baryon-image"
+version = "0.1.0"
+dependencies = [
+ "baryon-core",
  "bytemuck",
  "fast_image_resize",
  "jpeg-encoder",
  "jxl-oxide",
  "png",
  "rayon",
- "thiserror",
  "zune-core",
  "zune-jpeg",
 ]
@@ -147,7 +155,7 @@ dependencies = [
 name = "baryon-python"
 version = "0.1.0"
 dependencies = [
- "baryon-core",
+ "baryon-image",
  "numpy",
  "pyo3",
  "rayon",

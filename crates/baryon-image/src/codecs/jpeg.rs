@@ -9,10 +9,10 @@ use zune_core::options::DecoderOptions;
 use zune_jpeg::JpegDecoder;
 
 use super::{Codec, Decoded, ImageInfo, RegionSupport};
-use crate::error::{Error, Result};
-use crate::format::ImageFormat;
 use crate::geometry::Rect;
 use crate::image::{ColorType, Image, PixelBuffer, SampleType};
+use baryon_core::Format;
+use baryon_core::{Error, Result};
 
 /// Baseline and progressive JPEG decoder.
 pub(crate) struct JpegCodec;
@@ -48,7 +48,7 @@ impl Codec for JpegCodec {
             ColorType::Rgb
         };
         Ok(ImageInfo {
-            format: ImageFormat::Jpeg,
+            format: Format::Jpeg,
             width: u32::from(info.width),
             height: u32::from(info.height),
             color,
@@ -71,7 +71,7 @@ impl Codec for JpegCodec {
 }
 
 fn jpeg_error(err: zune_jpeg::errors::DecodeErrors) -> Error {
-    Error::decode(ImageFormat::Jpeg, err)
+    Error::decode(Format::Jpeg, err)
 }
 
 #[cfg(test)]
@@ -118,7 +118,7 @@ mod tests {
         assert!(matches!(
             err,
             Error::Decode {
-                format: ImageFormat::Jpeg,
+                format: Format::Jpeg,
                 ..
             }
         ));

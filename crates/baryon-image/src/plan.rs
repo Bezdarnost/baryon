@@ -15,11 +15,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::codecs::{self, ImageInfo, RegionStrategy};
-use crate::error::{Error, Result};
-use crate::format::ImageFormat;
 use crate::geometry::{Orientation, Rect, Rotation};
 use crate::image::{ColorType, Image, SampleType};
 use crate::ops::{self, Op, ResizeFilter};
+use baryon_core::Format;
+use baryon_core::{Error, Result};
 
 /// Encoded image bytes together with their parsed header.
 pub struct Source {
@@ -31,7 +31,7 @@ impl Source {
     /// Detects the format and parses the header. Pixels are not decoded.
     pub fn from_bytes(data: impl Into<Box<[u8]>>) -> Result<Self> {
         let data = data.into();
-        let format = ImageFormat::detect(&data).ok_or(Error::UnrecognizedFormat)?;
+        let format = Format::detect(&data).ok_or(Error::UnrecognizedFormat)?;
         let info = codecs::codec_for(format)?.probe(&data)?;
         if info.width == 0 || info.height == 0 {
             return Err(Error::decode(format, "image has zero width or height"));

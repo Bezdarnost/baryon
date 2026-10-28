@@ -11,10 +11,10 @@ use jxl_oxide::image::BitDepth;
 use jxl_oxide::{CropInfo, JxlImage, PixelFormat};
 
 use super::{Codec, Decoded, ImageInfo, RegionSupport};
-use crate::error::{BoxError, Error, Result};
-use crate::format::ImageFormat;
 use crate::geometry::Rect;
 use crate::image::{ColorType, Image, PixelBuffer, SampleType};
+use baryon_core::Format;
+use baryon_core::{BoxError, Error, Result};
 
 /// JPEG XL codestreams and ISOBMFF containers.
 pub(crate) struct JxlCodec;
@@ -38,7 +38,7 @@ impl Codec for JxlCodec {
             PixelFormat::Rgba => ColorType::Rgba,
             PixelFormat::Cmyk | PixelFormat::Cmyka => {
                 return Err(Error::Unsupported {
-                    format: ImageFormat::JpegXl,
+                    format: Format::JpegXl,
                     reason: "CMYK JPEG XL images are not supported yet",
                 });
             }
@@ -57,7 +57,7 @@ impl Codec for JxlCodec {
             RegionSupport::None
         };
         Ok(ImageInfo {
-            format: ImageFormat::JpegXl,
+            format: Format::JpegXl,
             width: image.width(),
             height: image.height(),
             color,
@@ -71,7 +71,7 @@ impl Codec for JxlCodec {
         let mut image = Self::open(data)?;
         if image.num_loaded_keyframes() == 0 {
             return Err(Error::decode(
-                ImageFormat::JpegXl,
+                Format::JpegXl,
                 "the first frame is incomplete",
             ));
         }
@@ -123,7 +123,7 @@ impl Codec for JxlCodec {
 
 fn jxl_error(err: BoxError) -> Error {
     Error::Decode {
-        format: ImageFormat::JpegXl,
+        format: Format::JpegXl,
         source: err,
     }
 }
@@ -248,7 +248,7 @@ mod tests {
         assert!(matches!(
             err,
             Error::Decode {
-                format: ImageFormat::JpegXl,
+                format: Format::JpegXl,
                 ..
             }
         ));

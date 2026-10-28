@@ -1,7 +1,7 @@
 //! End-to-end checks that the optimized physical plan is indistinguishable from running every
 //! recorded op naively, one after another, on a fully decoded image.
 
-use baryon_core::{
+use baryon_image::{
     ColorType, Image, LazyImage, Op, PixelBuffer, Rect, ResizeFilter, Rotation, ops,
 };
 
@@ -188,7 +188,7 @@ fn leading_crop_is_pushed_into_the_decoder() {
     );
     assert_eq!(
         plan.strategy(),
-        baryon_core::RegionStrategy::RowStreaming { rows_decoded: 48 }
+        baryon_image::RegionStrategy::RowStreaming { rows_decoded: 48 }
     );
 }
 

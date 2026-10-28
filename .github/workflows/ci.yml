@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p baryon-core --locked
+      - run: cargo test -p baryon-core -p baryon-image --locked
 
   msrv:
     name: Rust MSRV (1.88)

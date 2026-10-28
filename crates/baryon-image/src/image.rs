@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::error::{Error, Result};
+use baryon_core::{Error, Result};
 
 /// Channel layout of an image. Channels are always interleaved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -1,6 +1,6 @@
 [package]
 name = "baryon-core"
-description = "Lazy, region-aware image decoding and processing engine behind the baryon Python library"
+description = "Media-agnostic runtime for baryon: errors, format detection and the thread-pool executor"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,17 +11,8 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-bytemuck.workspace = true
-fast_image_resize.workspace = true
-jxl-oxide.workspace = true
-png.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
-zune-core.workspace = true
-zune-jpeg.workspace = true
-
-[dev-dependencies]
-jpeg-encoder.workspace = true
 
 [lints]
 workspace = true

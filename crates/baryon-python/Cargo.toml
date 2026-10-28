@@ -14,7 +14,7 @@ name = "_baryon"
 crate-type = ["cdylib"]
 
 [dependencies]
-baryon-core.workspace = true
+baryon-image.workspace = true
 numpy.workspace = true
 pyo3.workspace = true
 rayon.workspace = true
