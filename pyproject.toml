@@ -26,6 +26,7 @@ dependencies = ["numpy>=1.26"]
 dynamic = ["version"]
 
 [project.urls]
+Documentation = "https://bezdarnost.github.io/baryon/"
 Repository = "https://github.com/Bezdarnost/baryon"
 Issues = "https://github.com/Bezdarnost/baryon/issues"
 
@@ -36,6 +37,11 @@ dev = [
     "pillow>=11",
     "pytest>=8.4",
     "ruff>=0.14",
+]
+docs = [
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.6",
+    "mkdocstrings[python]>=1.0",
 ]
 
 [tool.maturin]

@@ -2,6 +2,10 @@
 
 Fast, lazy, region-aware image decoding and processing for Python, written in Rust.
 
+**[Documentation](https://bezdarnost.github.io/baryon/)** ·
+[Benchmarks](https://bezdarnost.github.io/baryon/benchmarks/) ·
+[Roadmap](https://bezdarnost.github.io/baryon/roadmap/)
+
 > **Status: pre-alpha.** The architecture is in place; codec coverage and performance work are
 > just starting. APIs may change.
 
@@ -94,6 +98,14 @@ release build, best of three runs on one machine; treat these as illustrative):
 
 Files with a non-default orientation are currently decoded in full and then cropped, until test
 fixtures for rotated files are in place.
+
+## Roadmap
+
+Images come first, with JPEG XL as the flagship format: JPEG XL encoding and lossless JPEG
+transcoding, faster full-image JPEG XL decoding, JPEG region decoding, then AVIF and WebP.
+**Video and audio** are planned on the same foundation: lazy frame and time ranges pushed into
+the decoder, batched across cores, returned as NumPy arrays. See the
+[roadmap](https://bezdarnost.github.io/baryon/roadmap/).
 
 ## Development
 

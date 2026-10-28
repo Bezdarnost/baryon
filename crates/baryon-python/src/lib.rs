@@ -191,12 +191,11 @@ fn open(py: Python<'_>, source: Input) -> PyResult<PyImage> {
 ///
 /// Equivalent to ``[open(s) for s in sources]``, but faster for many files.
 ///
+/// If any source fails, the first failure is raised as the same exception :func:`open`
+/// would raise, with its position prefixed to the message, e.g. ``sources[3]: ...``.
+///
 /// Args:
 ///     sources: File paths and/or bytes-like objects, as accepted by :func:`open`.
-///
-/// Raises:
-///     The first error any source raises in :func:`open`, with its position prefixed to the
-///     message, e.g. ``sources[3]: ...``.
 #[pyfunction]
 fn open_all(py: Python<'_>, sources: Vec<Input>) -> PyResult<Vec<PyImage>> {
     let executor = executor()?;
@@ -218,15 +217,15 @@ fn open_all(py: Python<'_>, sources: Vec<Input>) -> PyResult<Vec<PyImage>> {
 /// Equivalent to ``[image.to_numpy() for image in images]``, but runs on all of baryon's
 /// threads (see :func:`set_num_threads`) with the GIL released once for the whole batch.
 ///
+/// If any image fails, the first failure is raised as the same exception
+/// :meth:`Image.to_numpy` would raise, with its position prefixed to the message, e.g.
+/// ``images[3]: ...``.
+///
 /// Args:
 ///     images: Images from :func:`open` or :func:`open_all`, with any pending transformations.
 ///
 /// Returns:
 ///     One ``(height, width, channels)`` array per image, in input order.
-///
-/// Raises:
-///     The first error any image raises in :meth:`Image.to_numpy`, with its position prefixed
-///     to the message, e.g. ``images[3]: ...``.
 #[pyfunction]
 #[expect(
     clippy::needless_pass_by_value,
@@ -319,8 +318,7 @@ impl PyImage {
         (info.width, info.height)
     }
 
-    /// Whether the source is stored progressively (progressive JPEG, interlaced PNG), which
-    /// limits how much work partial decoding can skip.
+    /// Whether the source is stored in several passes (progressive JPEG, interlaced PNG).
     #[getter]
     fn progressive(&self) -> bool {
         self.inner.info().progressive
@@ -423,6 +421,7 @@ impl PyImage {
         into_ndarray(py, image)
     }
 
+    /// NumPy array protocol: ``numpy.asarray(image)`` decodes like :meth:`to_numpy`.
     #[pyo3(signature = (dtype = None, copy = None))]
     fn __array__<'py>(
         &self,
