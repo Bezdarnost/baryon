@@ -8,6 +8,7 @@ description = "Fast, lazy, region-aware image decoding and processing for Python
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
 authors = [{ name = "Aman Urumbekov", email = "amanurumbekov@gmail.com" }]
 keywords = ["image", "jpeg", "png", "jpeg-xl", "avif", "decoding", "rust"]
 classifiers = [
