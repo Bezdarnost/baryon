@@ -1,0 +1,22 @@
+[package]
+name = "baryon-python"
+description = "Python bindings for baryon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+name = "_baryon"
+crate-type = ["cdylib"]
+
+[dependencies]
+baryon-core.workspace = true
+numpy.workspace = true
+pyo3.workspace = true
+
+[lints]
+workspace = true

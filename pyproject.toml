@@ -1,0 +1,87 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "baryon"
+description = "Fast, lazy, region-aware image decoding and processing for Python, written in Rust"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT OR Apache-2.0"
+authors = [{ name = "Aman Urumbekov", email = "amanurumbekov@gmail.com" }]
+keywords = ["image", "jpeg", "png", "jpeg-xl", "avif", "decoding", "rust"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Free Threading :: 2 - Beta",
+    "Programming Language :: Rust",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Typing :: Typed",
+]
+dependencies = ["numpy>=1.26"]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/Bezdarnost/baryon"
+Issues = "https://github.com/Bezdarnost/baryon/issues"
+
+[dependency-groups]
+dev = [
+    "maturin>=1.9,<2",
+    "mypy>=1.18",
+    "pillow>=11",
+    "pytest>=8.4",
+    "ruff>=0.14",
+]
+
+[tool.maturin]
+manifest-path = "crates/baryon-python/Cargo.toml"
+module-name = "baryon._baryon"
+python-source = "python"
+
+[tool.uv]
+# Rebuild the extension whenever Rust sources change.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "crates/**/*.rs" },
+    { file = "crates/**/Cargo.toml" },
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+addopts = ["--strict-markers", "--strict-config", "-ra"]
+xfail_strict = true
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",  # conflicts with the formatter
+    "CPY001",  # license is declared once, in pyproject.toml
+    "D203",    # incompatible with D211
+    "D213",    # incompatible with D212
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "S101", "S311", "PLR2004", "INP001"]
+"python/baryon/_baryon.pyi" = ["A001", "A002", "PYI021"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["baryon", "conftest"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+strict = true
+files = ["python", "tests"]

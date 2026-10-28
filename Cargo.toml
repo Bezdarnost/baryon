@@ -1,0 +1,42 @@
+[workspace]
+resolver = "3"
+members = ["crates/baryon-core", "crates/baryon-python"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Bezdarnost/baryon"
+authors = ["Aman Urumbekov <amanurumbekov@gmail.com>"]
+
+[workspace.dependencies]
+baryon-core = { path = "crates/baryon-core", version = "0.1.0" }
+bytemuck = "1.23"
+fast_image_resize = "6.1"
+numpy = "0.30"
+png = "0.18"
+pyo3 = "0.30"
+thiserror = "2.0"
+zune-core = "0.5"
+zune-jpeg = "0.5"
+# dev
+jpeg-encoder = "0.7"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"

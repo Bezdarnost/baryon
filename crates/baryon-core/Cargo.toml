@@ -1,0 +1,23 @@
+[package]
+name = "baryon-core"
+description = "Lazy, region-aware image decoding and processing engine behind the baryon Python library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+fast_image_resize.workspace = true
+png.workspace = true
+thiserror.workspace = true
+zune-core.workspace = true
+zune-jpeg.workspace = true
+
+[dev-dependencies]
+jpeg-encoder.workspace = true
+
+[lints]
+workspace = true
