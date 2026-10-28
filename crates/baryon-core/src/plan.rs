@@ -200,7 +200,7 @@ impl LazyImage {
     }
 
     /// Lowers the recorded ops into an optimized physical plan.
-    pub fn plan(&self) -> Result<PhysicalPlan> {
+    pub fn plan(&self) -> PhysicalPlan {
         PhysicalPlan::new(self.info(), &self.ops)
     }
 
@@ -208,9 +208,9 @@ impl LazyImage {
     ///
     /// With `optimized` set, shows the physical plan that [`LazyImage::execute`] will run;
     /// otherwise lists the logical ops as recorded.
-    pub fn explain(&self, optimized: bool) -> Result<String> {
+    pub fn explain(&self, optimized: bool) -> String {
         if optimized {
-            return Ok(self.plan()?.to_string());
+            return self.plan().to_string();
         }
         let info = self.info();
         let mut out = format!(
@@ -221,12 +221,12 @@ impl LazyImage {
             // Writing to a String cannot fail.
             let _ = writeln!(out, "{op}");
         }
-        Ok(out)
+        out
     }
 
     /// Decodes and transforms the image.
     pub fn execute(&self) -> Result<Image> {
-        self.plan()?.execute(self.source.data())
+        self.plan().execute(self.source.data())
     }
 }
 
@@ -272,8 +272,7 @@ pub struct PhysicalPlan {
 }
 
 impl PhysicalPlan {
-    fn new(info: &ImageInfo, ops: &[Op]) -> Result<Self> {
-        let codec = codecs::codec_for(info.format)?;
+    fn new(info: &ImageInfo, ops: &[Op]) -> Self {
         let mut geometry = Geometry::new(info.width, info.height);
         let mut region = None;
         let mut steps = Vec::new();
@@ -309,12 +308,12 @@ impl PhysicalPlan {
         geometry.flush(&mut region, &mut steps);
 
         let region = region.unwrap_or_else(|| info.bounds());
-        Ok(Self {
+        Self {
             info: *info,
             region,
-            strategy: codec.region_strategy(info, region),
+            strategy: RegionStrategy::new(info, region),
             steps,
-        })
+        }
     }
 
     /// Header of the image being decoded.

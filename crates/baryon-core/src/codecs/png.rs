@@ -8,7 +8,7 @@ use std::io::Cursor;
 
 use png::{BitDepth, Decoder, Limits, Reader, Transformations};
 
-use super::{Codec, Decoded, ImageInfo, RegionStrategy};
+use super::{Codec, Decoded, ImageInfo, RegionSupport};
 use crate::error::{Error, Result};
 use crate::format::ImageFormat;
 use crate::geometry::Rect;
@@ -53,23 +53,18 @@ impl Codec for PngCodec {
             color,
             sample_type,
             progressive: info.interlaced,
+            // Adam7 spreads every row across seven passes, so nothing can be skipped.
+            region_support: if info.interlaced {
+                RegionSupport::None
+            } else {
+                RegionSupport::Rows
+            },
         })
-    }
-
-    fn region_strategy(&self, info: &ImageInfo, region: Rect) -> RegionStrategy {
-        if info.progressive {
-            RegionStrategy::FullDecode
-        } else {
-            RegionStrategy::RowStreaming {
-                // `region` lies inside a u32-sized image, so its bottom edge fits in a u32.
-                rows_decoded: region.y + region.height,
-            }
-        }
     }
 
     fn decode(&self, data: &[u8], info: &ImageInfo, region: Rect) -> Result<Decoded> {
         let mut reader = Self::reader(data)?;
-        if info.progressive {
+        if info.region_support == RegionSupport::None {
             return decode_full(&mut reader, info);
         }
 
@@ -125,16 +120,18 @@ fn write_row(dst: &mut PixelBuffer, index: usize, src: &[u8]) {
         PixelBuffer::U16(buf) => {
             let len = src.len() / 2;
             let start = index * len;
-            for (d, s) in buf[start..start + len].iter_mut().zip(src.chunks_exact(2)) {
-                *d = u16::from_be_bytes([s[0], s[1]]);
+            for (d, s) in buf[start..start + len].iter_mut().zip(src.as_chunks().0) {
+                *d = u16::from_be_bytes(*s);
             }
         }
     }
 }
 
 fn be_to_u16(raw: &[u8]) -> Vec<u16> {
-    raw.chunks_exact(2)
-        .map(|s| u16::from_be_bytes([s[0], s[1]]))
+    raw.as_chunks()
+        .0
+        .iter()
+        .map(|&s| u16::from_be_bytes(s))
         .collect()
 }
 

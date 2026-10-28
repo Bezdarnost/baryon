@@ -53,7 +53,7 @@ impl ImageFormat {
 
     /// Whether this build can decode the format.
     pub const fn is_decodable(self) -> bool {
-        matches!(self, Self::Jpeg | Self::Png)
+        matches!(self, Self::Jpeg | Self::Png | Self::JpegXl)
     }
 }
 
@@ -75,7 +75,13 @@ fn is_avif(bytes: &[u8]) -> bool {
     }
     // Layout: size(4) 'ftyp'(4) major_brand(4) minor_version(4) compatible_brands(4 * n).
     std::iter::once(&bytes[8..12])
-        .chain(bytes[16..end].chunks_exact(4))
+        .chain(
+            bytes[16..end]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(<[u8; 4]>::as_slice),
+        )
         .any(|brand| brand == b"avif" || brand == b"avis")
 }
 

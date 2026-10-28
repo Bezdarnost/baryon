@@ -116,13 +116,13 @@ fn check_random_pipelines(allow_resize: bool, seed: u64) {
             (actual.width(), actual.height()),
             (image.width(), image.height()),
             "case {case}: declared size disagrees with executed size\n{}",
-            image.explain(false).unwrap()
+            image.explain(false)
         );
         assert!(
             actual == expected,
             "case {case}: optimized result differs\nlogical:\n{}\nphysical:\n{}",
-            image.explain(false).unwrap(),
-            image.explain(true).unwrap()
+            image.explain(false),
+            image.explain(true)
         );
     }
 }
@@ -145,7 +145,7 @@ fn leading_crop_is_pushed_into_the_decoder() {
         .crop(Rect::new(0, 0, 10, 20))
         .unwrap()
         .flip_horizontal();
-    let plan = image.plan().unwrap();
+    let plan = image.plan();
     // Output rows 0..20 of the rotated image are source columns 0..20, read bottom-up; output
     // columns 0..10 are the bottom 10 source rows.
     assert_eq!(plan.region(), Rect::new(0, 38, 20, 10));
@@ -170,7 +170,7 @@ fn identity_ops_produce_no_steps() {
         .rotate(Rotation::Cw180)
         .resize(8, 8, ResizeFilter::Lanczos3)
         .unwrap();
-    let plan = image.plan().unwrap();
+    let plan = image.plan();
     assert!(plan.steps().is_empty(), "{plan}");
     assert_eq!(
         image.execute().unwrap(),

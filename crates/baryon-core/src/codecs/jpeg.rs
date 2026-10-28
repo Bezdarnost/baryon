@@ -8,7 +8,7 @@ use zune_core::colorspace::ColorSpace;
 use zune_core::options::DecoderOptions;
 use zune_jpeg::JpegDecoder;
 
-use super::{Codec, Decoded, ImageInfo, RegionStrategy};
+use super::{Codec, Decoded, ImageInfo, RegionSupport};
 use crate::error::{Error, Result};
 use crate::format::ImageFormat;
 use crate::geometry::Rect;
@@ -54,11 +54,8 @@ impl Codec for JpegCodec {
             color,
             sample_type: SampleType::U8,
             progressive: info.sof.is_progressive(),
+            region_support: RegionSupport::None,
         })
-    }
-
-    fn region_strategy(&self, _info: &ImageInfo, _region: Rect) -> RegionStrategy {
-        RegionStrategy::FullDecode
     }
 
     fn decode(&self, data: &[u8], info: &ImageInfo, _region: Rect) -> Result<Decoded> {

@@ -93,16 +93,10 @@ def test_unrecognized_data_raises() -> None:
         baryon.open(b"definitely not an image")
 
 
-@pytest.mark.parametrize(
-    "header",
-    [
-        pytest.param(b"\xff\x0a\x00\x00", id="jxl"),
-        pytest.param(b"\x00\x00\x00\x14ftypavif\x00\x00\x00\x00mif1", id="avif"),
-    ],
-)
-def test_recognized_but_unsupported_formats(header: bytes) -> None:
+def test_recognized_but_unsupported_format() -> None:
+    avif_header = b"\x00\x00\x00\x14ftypavif\x00\x00\x00\x00mif1"
     with pytest.raises(baryon.UnsupportedFormatError, match="not implemented yet"):
-        baryon.open(header)
+        baryon.open(avif_header)
 
 
 def test_corrupt_header_raises_decode_error(encode: Encoder) -> None:

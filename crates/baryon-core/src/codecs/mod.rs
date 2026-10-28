@@ -7,6 +7,7 @@
 //! to know the details.
 
 mod jpeg;
+mod jxl;
 mod png;
 
 use std::fmt;
@@ -29,9 +30,10 @@ pub struct ImageInfo {
     pub color: ColorType,
     /// Sample type the decoder will produce.
     pub sample_type: SampleType,
-    /// Whether the data is stored in multiple passes (progressive JPEG, Adam7 PNG), which
-    /// limits how much partial decoding can save.
+    /// Whether the data is stored in multiple passes (progressive JPEG, Adam7 PNG).
     pub progressive: bool,
+    /// How much work the decoder can skip when only part of this image is needed.
+    pub region_support: RegionSupport,
 }
 
 impl ImageInfo {
@@ -41,7 +43,22 @@ impl ImageInfo {
     }
 }
 
-/// How a codec intends to satisfy a region request; reported by `explain()`.
+/// Partial-decoding capability of one particular encoded image.
+///
+/// This is a property of the file, not just the format: an Adam7-interlaced PNG cannot stream
+/// rows, for example.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RegionSupport {
+    /// The whole image is always decoded.
+    None,
+    /// Rows are decoded top to bottom and decoding can stop after the last needed row.
+    Rows,
+    /// The image is coded in independent tiles (JPEG XL groups); only the tiles overlapping the
+    /// requested region are decoded.
+    Tiles,
+}
+
+/// How a region request will be satisfied; reported by `explain()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegionStrategy {
     /// The whole image is decoded and then trimmed.
@@ -52,6 +69,26 @@ pub enum RegionStrategy {
         /// Number of rows that must be decoded.
         rows_decoded: u32,
     },
+    /// Only the tiles overlapping the region are decoded.
+    TileDecode,
+}
+
+impl RegionStrategy {
+    /// The strategy for decoding `region` (which must lie inside the image) of `info`.
+    pub const fn new(info: &ImageInfo, region: Rect) -> Self {
+        let full = region.x == 0
+            && region.y == 0
+            && region.width == info.width
+            && region.height == info.height;
+        match info.region_support {
+            _ if full => Self::FullDecode,
+            RegionSupport::None => Self::FullDecode,
+            RegionSupport::Rows => Self::RowStreaming {
+                rows_decoded: region.y + region.height,
+            },
+            RegionSupport::Tiles => Self::TileDecode,
+        }
+    }
 }
 
 impl fmt::Display for RegionStrategy {
@@ -61,6 +98,7 @@ impl fmt::Display for RegionStrategy {
             Self::RowStreaming { rows_decoded } => {
                 write!(f, "row streaming, stops after {rows_decoded} rows")
             }
+            Self::TileDecode => f.write_str("tile decoding, skips tiles outside the region"),
         }
     }
 }
@@ -76,10 +114,8 @@ pub(crate) trait Codec: Sync {
     /// Reads only the headers.
     fn probe(&self, data: &[u8]) -> Result<ImageInfo>;
 
-    /// Describes how [`Codec::decode`] will handle `region`.
-    fn region_strategy(&self, info: &ImageInfo, region: Rect) -> RegionStrategy;
-
-    /// Decodes at least `region`, which must lie within the image bounds.
+    /// Decodes at least `region`, which must lie within the image bounds, following
+    /// [`RegionStrategy::new`] for `info.region_support`.
     fn decode(&self, data: &[u8], info: &ImageInfo, region: Rect) -> Result<Decoded>;
 }
 
@@ -88,10 +124,7 @@ pub(crate) fn codec_for(format: ImageFormat) -> Result<&'static dyn Codec> {
     match format {
         ImageFormat::Jpeg => Ok(&jpeg::JpegCodec),
         ImageFormat::Png => Ok(&png::PngCodec),
-        ImageFormat::JpegXl => Err(Error::Unsupported {
-            format,
-            reason: "JPEG XL decoding is planned but not implemented yet",
-        }),
+        ImageFormat::JpegXl => Ok(&jxl::JxlCodec),
         ImageFormat::Avif => Err(Error::Unsupported {
             format,
             reason: "AVIF decoding is planned but not implemented yet",

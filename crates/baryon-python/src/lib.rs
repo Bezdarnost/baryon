@@ -206,23 +206,31 @@ impl PyImage {
             .map_err(to_py_err)
     }
 
-    /// Returns a new image rotated counter-clockwise by a multiple of 90 degrees.
+    /// Returns a new image rotated by a multiple of 90 degrees, **clockwise** by default.
     ///
-    /// The direction matches Pillow's ``Image.rotate`` and ``numpy.rot90``; pass a negative
-    /// angle to rotate clockwise.
+    /// Note:
+    ///     Pillow's ``Image.rotate`` and ``numpy.rot90`` turn counter-clockwise for positive
+    ///     angles. baryon turns clockwise, like CSS and photo viewers. When porting code from
+    ///     those libraries, pass ``clockwise=False`` to keep their behaviour.
+    ///
+    /// Args:
+    ///     degrees: Angle in degrees; any multiple of 90, including negative values.
+    ///     clockwise: Rotate clockwise (default) or counter-clockwise.
     ///
     /// Raises:
     ///     ValueError: ``degrees`` is not a multiple of 90.
-    fn rotate(&self, degrees: i64) -> PyResult<Self> {
-        let clockwise = degrees.checked_neg().ok_or_else(|| {
-            PyValueError::new_err(format!("rotation of {degrees} degrees is out of range"))
-        })?;
-        Ok(
-            match Rotation::from_degrees(clockwise).map_err(PyValueError::new_err)? {
-                Some(rotation) => self.inner.rotate(rotation).into(),
-                None => self.inner.clone().into(),
-            },
-        )
+    #[pyo3(signature = (degrees, *, clockwise = true))]
+    fn rotate(&self, degrees: i64, clockwise: bool) -> PyResult<Self> {
+        let rotation = Rotation::from_degrees(degrees).map_err(PyValueError::new_err)?;
+        let rotation = if clockwise {
+            rotation
+        } else {
+            rotation.map(Rotation::inverse)
+        };
+        Ok(match rotation {
+            Some(rotation) => self.inner.rotate(rotation).into(),
+            None => self.inner.clone().into(),
+        })
     }
 
     /// Returns a new image mirrored left to right.
@@ -241,8 +249,8 @@ impl PyImage {
     ///     optimized: Show the physical plan that will run (default) instead of the
     ///         transformations as recorded.
     #[pyo3(signature = (*, optimized = true))]
-    fn explain(&self, optimized: bool) -> PyResult<String> {
-        self.inner.explain(optimized).map_err(to_py_err)
+    fn explain(&self, optimized: bool) -> String {
+        self.inner.explain(optimized)
     }
 
     /// Decodes the image, applies all pending transformations and returns the pixels.

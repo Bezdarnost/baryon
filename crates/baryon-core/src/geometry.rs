@@ -238,6 +238,16 @@ impl Rotation {
         })
     }
 
+    /// The rotation that undoes this one.
+    #[must_use]
+    pub const fn inverse(self) -> Self {
+        match self {
+            Self::Cw90 => Self::Cw270,
+            Self::Cw180 => Self::Cw180,
+            Self::Cw270 => Self::Cw90,
+        }
+    }
+
     /// Clockwise angle in degrees.
     pub const fn degrees(self) -> u32 {
         match self {
@@ -323,6 +333,16 @@ mod tests {
                 u64::from(src.width) * u64::from(src.height),
                 u64::from(out.width) * u64::from(out.height)
             );
+        }
+    }
+
+    #[test]
+    fn inverse_undoes_rotation() {
+        for r in ALL_ROTATIONS {
+            let o = Orientation::IDENTITY
+                .then_rotate(r)
+                .then_rotate(r.inverse());
+            assert!(o.is_identity(), "{r} then its inverse");
         }
     }
 

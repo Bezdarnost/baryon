@@ -9,9 +9,9 @@ Fast, lazy, region-aware image decoding and processing for Python, written in Ru
 import baryon
 
 image = (
-    baryon.open("scan.png")  # parses the header only
+    baryon.open("scan.jxl")  # parses the header only
     .crop(0, 0, 1024, 1024)  # recorded, not performed
-    .rotate(90)
+    .rotate(90)  # clockwise; see the note below
     .resize(256, 256, filter="lanczos3")
 )
 print(image.explain())  # the optimized plan
@@ -28,13 +28,13 @@ pixels you would throw away are never decoded in the first place.
 >>> print(image.explain(optimized=False))   # as recorded
 source png 8000x6000 RGB uint8
 crop 1024x1024+0+0
-rotate 90° counter-clockwise
+rotate 90° clockwise
 resize 256x256 (lanczos3)
 
 >>> print(image.explain())                  # as executed
 decode png 8000x6000 RGB uint8
   region 1024x1024+0+0 (row streaming, stops after 1024 rows)
-orient transpose+flip_x
+orient transpose+flip_y
 resize 256x256 (lanczos3)
 ```
 
@@ -52,21 +52,43 @@ How it works:
 - **Free-threading ready.** All work runs with the GIL released, and the extension declares
   free-threaded support.
 
+> [!WARNING]
+> **`rotate()` turns clockwise by default**, like CSS and photo viewers. This is the opposite
+> of Pillow's `Image.rotate` and `numpy.rot90`, which turn counter-clockwise for positive
+> angles. When porting code from those libraries, use `rotate(degrees, clockwise=False)`.
+
 ## Format support
 
-| Format   | Decode | Partial decode today                     | Planned                                   |
-|----------|:------:|------------------------------------------|-------------------------------------------|
-| PNG      | ✅     | row streaming: stops after the last needed row | —                                   |
-| JPEG     | ✅     | full decode, then trim                   | MCU skipping, DCT-domain downscale (1/2–1/8) |
-| JPEG XL  | 🔜     | —                                        | group-level region decode, progressive previews, lossless JPEG transcoding |
-| AVIF     | 🔜     | —                                        | grid/tile-aware decode                    |
+| Format  | Decode | Partial decode today                              | Planned                                                     |
+|---------|:------:|---------------------------------------------------|-------------------------------------------------------------|
+| JPEG XL | ✅     | tile decoding: only groups overlapping the region | progressive previews, lossless JPEG transcoding, region decode for rotated files |
+| PNG     | ✅     | row streaming: stops after the last needed row    | —                                                           |
+| JPEG    | ✅     | full decode, then trim                            | MCU skipping, DCT-domain downscale (1/2–1/8)                |
+| AVIF    | 🔜     | —                                                 | grid/tile-aware decode                                      |
 
-JPEG XL is the flagship target. Its independently decodable groups and progressive structure
-suit region-aware decoding better than any other mainstream format.
+### JPEG XL
+
+JPEG XL is baryon's flagship format. It is coded in independent groups (256×256 pixels by
+default), so a crop is handed straight to the decoder, which renders only the groups it
+touches. Decoding uses [jxl-oxide](https://github.com/tirr-c/jxl-oxide) (pure Rust) with
+`moxcms` colour management. 8-bit images decode to `uint8`; higher bit depths and float images
+decode to full-range `uint16`. The orientation stored in the file is applied automatically.
+Only the first frame of an animation is decoded, and CMYK images are not supported yet.
+
+What a 256×256 crop costs compared with decoding the whole image (synthetic 4096×4096 image,
+release build, best of three runs on one machine; treat these as illustrative):
+
+| Source            | Full decode | Crop at the center | Crop at the top |
+|-------------------|------------:|-------------------:|----------------:|
+| JPEG XL (lossy)   | 344 ms      | 11.6 ms (30×)      | 8.6 ms (40×)    |
+| PNG               | 80 ms       | 37 ms (2×)         | 4.5 ms (18×)    |
+
+Files with a non-default orientation are currently decoded in full and then cropped, until test
+fixtures for rotated files are in place.
 
 ## Development
 
-Requires a Rust toolchain (stable, MSRV 1.87) and [uv](https://docs.astral.sh/uv/).
+Requires a Rust toolchain (stable, MSRV 1.88) and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync                      # builds the extension in development mode

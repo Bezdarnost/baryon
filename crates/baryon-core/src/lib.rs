@@ -8,7 +8,7 @@
 //!     .crop(Rect::new(100, 100, 512, 512))?           // recorded, not performed
 //!     .rotate(Rotation::Cw90)
 //!     .resize(256, 256, ResizeFilter::Lanczos3)?;
-//! println!("{}", image.explain(true)?);               // the optimized plan
+//! println!("{}", image.explain(true));               // the optimized plan
 //! let pixels = image.execute()?;                      // decode only what is needed
 //! # Ok(())
 //! # }
@@ -22,7 +22,7 @@ mod image;
 pub mod ops;
 mod plan;
 
-pub use codecs::{ImageInfo, RegionStrategy};
+pub use codecs::{ImageInfo, RegionStrategy, RegionSupport};
 pub use error::{BoxError, Error, Result};
 pub use format::ImageFormat;
 pub use geometry::{Orientation, Rect, Rotation};

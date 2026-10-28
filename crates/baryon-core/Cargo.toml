@@ -11,6 +11,7 @@ authors.workspace = true
 [dependencies]
 bytemuck.workspace = true
 fast_image_resize.workspace = true
+jxl-oxide.workspace = true
 png.workspace = true
 thiserror.workspace = true
 zune-core.workspace = true
