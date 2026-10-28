@@ -5,7 +5,7 @@ members = ["crates/baryon-core", "crates/baryon-image", "crates/baryon-python"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Bezdarnost/baryon"
 authors = ["Aman Urumbekov <amanurumbekov@gmail.com>"]
@@ -15,6 +15,7 @@ baryon-core = { path = "crates/baryon-core", version = "0.1.0" }
 baryon-image = { path = "crates/baryon-image", version = "0.1.0" }
 bytemuck = "1.23"
 fast_image_resize = { version = "6.1", features = ["rayon"] }
+jxl = "0.8"
 jxl-oxide = { version = "0.12", default-features = false, features = ["moxcms", "rayon"] }
 numpy = "0.30"
 png = "0.18"

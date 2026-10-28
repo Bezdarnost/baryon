@@ -109,7 +109,7 @@ the decoder, batched across cores, returned as NumPy arrays. See the
 
 ## Development
 
-Requires a Rust toolchain (stable, MSRV 1.88) and [uv](https://docs.astral.sh/uv/).
+Requires a Rust toolchain (stable, MSRV 1.89) and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync                      # builds the extension in development mode

@@ -1,20 +1,22 @@
-//! JPEG XL decoding via `jxl-oxide`.
+//! JPEG XL decoding.
 //!
-//! JPEG XL codes images in independent groups (256x256 pixels by default), so a region request is
-//! handed to the decoder, which only renders the groups overlapping it. The orientation stored in
-//! the header is applied by the decoder, so all dimensions here are as displayed. Colour
-//! management (needed for ICC-tagged lossy images) uses the pure-Rust `moxcms` backend.
+//! Two pure-Rust decoders are combined, each where it is strongest:
 //!
-//! Only the first frame of an animation is decoded.
+//! * `jxl-oxide` parses headers and decodes regions. JPEG XL codes images in independent groups
+//!   (256x256 pixels by default), so a region request only renders the groups overlapping it.
+//! * `jxl-rs` decodes whole images, where it is faster per core (see [`super::jxl_full`]).
+//!
+//! The orientation stored in the header is applied by the decoders, so all dimensions here are
+//! as displayed. Colour management (needed for ICC-tagged lossy images) uses the pure-Rust
+//! `moxcms` backend. Only the first frame of an animation is decoded.
 
 use jxl_oxide::image::BitDepth;
 use jxl_oxide::{CropInfo, JxlImage, PixelFormat};
 
-use super::{Codec, Decoded, ImageInfo, RegionSupport};
+use super::{Codec, Decoded, ImageInfo, RegionSupport, jxl_full};
 use crate::geometry::Rect;
 use crate::image::{ColorType, Image, PixelBuffer, SampleType};
-use baryon_core::Format;
-use baryon_core::{BoxError, Error, Result};
+use baryon_core::{BoxError, Error, Format, Result};
 
 /// JPEG XL codestreams and ISOBMFF containers.
 pub(crate) struct JxlCodec;
@@ -68,6 +70,17 @@ impl Codec for JxlCodec {
     }
 
     fn decode(&self, data: &[u8], info: &ImageInfo, region: Rect) -> Result<Decoded> {
+        // Whole unrotated images go to jxl-rs, unless it would pick a different colour space.
+        if info.region_support == RegionSupport::Tiles
+            && region == info.bounds()
+            && let Some(image) = jxl_full::decode(data, info)?
+        {
+            return Ok(Decoded {
+                image,
+                region: info.bounds(),
+            });
+        }
+
         let mut image = Self::open(data)?;
         if image.num_loaded_keyframes() == 0 {
             return Err(Error::decode(
@@ -221,21 +234,56 @@ mod tests {
 
     #[test]
     fn region_decode_matches_full_decode() {
-        let (info, full) = decode_full(LOSSY);
-        let regions = [
-            Rect::new(0, 0, 1, 1),
-            Rect::new(599, 449, 1, 1),
-            Rect::new(200, 200, 150, 100), // straddles four 256x256 groups
-            Rect::new(250, 10, 20, 400),
-            Rect::new(256, 256, 256, 194),
-        ];
-        for region in regions {
-            let part = JxlCodec.decode(LOSSY, &info, region).unwrap();
-            assert_eq!(part.region, region);
-            assert!(
-                part.image == ops::crop(&full, region).unwrap(),
-                "region {region} differs from the same area of a full decode"
-            );
+        // Full images come from jxl-rs and regions from jxl-oxide. Lossless pixels must match
+        // exactly; lossy ones may differ by one level of rounding between the two decoders.
+        for (data, tolerance) in [(LOSSY, 1), (RGB8, 0), (RGBA16, 0)] {
+            let (info, full) = decode_full(data);
+            let (w, h) = (info.width, info.height);
+            let regions = [
+                Rect::new(0, 0, 1, 1),
+                Rect::new(w - 1, h - 1, 1, 1),
+                Rect::new(w / 3, h / 3, w / 2, h / 2),
+                Rect::new(0, h / 2, w, h / 2),
+            ];
+            for region in regions {
+                let part = JxlCodec.decode(data, &info, region).unwrap();
+                assert_eq!(part.region, region);
+                let expected = ops::crop(&full, region).unwrap();
+                let diff = max_abs_diff(&part.image, &expected);
+                assert!(diff <= tolerance, "region {region}: max difference {diff}");
+            }
+        }
+    }
+
+    #[test]
+    fn regions_of_the_lossy_image_straddle_groups_exactly_like_each_other() {
+        // Two overlapping region decodes both come from jxl-oxide, so they agree exactly.
+        let info = JxlCodec.probe(LOSSY).unwrap();
+        let big = JxlCodec
+            .decode(LOSSY, &info, Rect::new(100, 100, 400, 300))
+            .unwrap();
+        let small = JxlCodec
+            .decode(LOSSY, &info, Rect::new(200, 200, 150, 100))
+            .unwrap();
+        let inner = ops::crop(&big.image, Rect::new(100, 100, 150, 100)).unwrap();
+        assert_eq!(small.image, inner);
+    }
+
+    fn max_abs_diff(a: &Image, b: &Image) -> u16 {
+        match (a.pixels(), b.pixels()) {
+            (PixelBuffer::U8(x), PixelBuffer::U8(y)) => x
+                .iter()
+                .zip(y)
+                .map(|(p, q)| u16::from(p.abs_diff(*q)))
+                .max()
+                .unwrap_or(0),
+            (PixelBuffer::U16(x), PixelBuffer::U16(y)) => x
+                .iter()
+                .zip(y)
+                .map(|(p, q)| p.abs_diff(*q))
+                .max()
+                .unwrap_or(0),
+            _ => u16::MAX,
         }
     }
 

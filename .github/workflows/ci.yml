@@ -46,11 +46,11 @@ jobs:
       - run: cargo test -p baryon-core -p baryon-image --locked
 
   msrv:
-    name: Rust MSRV (1.88)
+    name: Rust MSRV (1.89)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets --locked
 

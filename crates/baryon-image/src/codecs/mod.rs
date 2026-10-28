@@ -8,6 +8,7 @@
 
 mod jpeg;
 mod jxl;
+mod jxl_full;
 mod png;
 
 use std::fmt;

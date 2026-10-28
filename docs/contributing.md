@@ -2,7 +2,7 @@
 
 ## Setup
 
-You need a Rust toolchain (stable; 1.88 or newer) and [uv](https://docs.astral.sh/uv/).
+You need a Rust toolchain (stable; 1.89 or newer) and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/Bezdarnost/baryon && cd baryon

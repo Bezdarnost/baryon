@@ -11,7 +11,7 @@ libraries to install.
 
 !!! note "Before the first release"
     Until baryon is published on PyPI, build it from a checkout with a Rust toolchain
-    (1.88 or newer) and [uv](https://docs.astral.sh/uv/):
+    (1.89 or newer) and [uv](https://docs.astral.sh/uv/):
 
     ```bash
     git clone https://github.com/Bezdarnost/baryon && cd baryon
