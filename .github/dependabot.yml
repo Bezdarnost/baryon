@@ -20,6 +20,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Referenced by toolchain branch (`@stable`, `@<MSRV>`), not by release tag. Dependabot
+      # misreads the MSRV pin as a version to bump; the MSRV changes only deliberately.
+      - dependency-name: dtolnay/rust-toolchain
     groups:
       actions:
         patterns: ["*"]
