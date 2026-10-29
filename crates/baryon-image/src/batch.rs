@@ -16,8 +16,17 @@ impl LazyImage {
 
     /// Decodes and transforms many images in parallel. Results are in input order, and one
     /// failure does not affect the others.
+    ///
+    /// The largest decodes start first, so that one big image does not run alone at the end
+    /// of a batch.
     pub fn execute_all(executor: &Executor, images: &[Self]) -> Vec<Result<Image>> {
-        executor.map(images, Self::execute)
+        executor.map_by_cost(images, Self::cost, Self::execute)
+    }
+
+    /// Relative cost of executing this pipeline: the number of source pixels decoded.
+    pub(crate) fn cost(&self) -> u64 {
+        let region = self.plan().region();
+        u64::from(region.width) * u64::from(region.height)
     }
 
     /// Reads and parses the headers of many files in parallel. Results are in input order.

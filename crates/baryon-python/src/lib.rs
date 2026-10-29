@@ -264,7 +264,7 @@ fn to_jxl_all<'py>(
         .iter()
         .map(|image| image.get().inner.clone())
         .collect();
-    let encoded = py.detach(|| executor.map(&pipelines, |image| image.to_jxl(&options)));
+    let encoded = py.detach(|| LazyImage::to_jxl_all(&executor, &pipelines, &options));
     encoded
         .into_iter()
         .enumerate()

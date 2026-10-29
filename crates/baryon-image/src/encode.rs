@@ -1,6 +1,6 @@
 //! Encoding images as JPEG XL with the vendored libjxl, and restoring transcoded JPEGs.
 
-use baryon_core::{Error, Format, Result};
+use baryon_core::{Error, Executor, Format, Result};
 
 use crate::image::{Image, SampleType};
 use crate::plan::LazyImage;
@@ -69,6 +69,16 @@ impl LazyImage {
             );
         }
         encode_pixels(&self.execute()?, options)
+    }
+
+    /// Encodes many pipelines as JPEG XL in parallel, the largest first. Results are in input
+    /// order, and one failure does not affect the others.
+    pub fn to_jxl_all(
+        executor: &Executor,
+        images: &[Self],
+        options: &JxlOptions,
+    ) -> Vec<Result<Vec<u8>>> {
+        executor.map_by_cost(images, Self::cost, |image| image.to_jxl(options))
     }
 }
 

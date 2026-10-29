@@ -1,5 +1,6 @@
 //! Parallel execution on a dedicated thread pool.
 
+use std::cmp::Reverse;
 use std::fmt;
 use std::sync::Arc;
 
@@ -46,6 +47,33 @@ impl Executor {
     pub fn map<T: Sync, R: Send>(&self, items: &[T], op: impl Fn(&T) -> R + Send + Sync) -> Vec<R> {
         self.install(|| items.par_iter().map(op).collect())
     }
+
+    /// Like [`Executor::map`], but starts the most expensive items first.
+    ///
+    /// Items are handed to idle threads one at a time in descending `cost`, so a large item
+    /// never starts last while the other threads wait for it (longest-processing-time-first
+    /// scheduling). Use this when item costs vary widely and are known up front, such as
+    /// decoding images of mixed sizes. Results are in input order.
+    pub fn map_by_cost<T: Sync, R: Send>(
+        &self,
+        items: &[T],
+        cost: impl Fn(&T) -> u64,
+        op: impl Fn(&T) -> R + Send + Sync,
+    ) -> Vec<R> {
+        let mut order: Vec<usize> = (0..items.len()).collect();
+        order.sort_by_key(|&index| Reverse(cost(&items[index])));
+        // `par_bridge` lets each idle thread pull the next index from the shared iterator, which
+        // keeps the order; `par_iter` would split the list into ranges up front instead.
+        let mut done: Vec<(usize, R)> = self.install(|| {
+            order
+                .into_iter()
+                .par_bridge()
+                .map(|index| (index, op(&items[index])))
+                .collect()
+        });
+        done.sort_unstable_by_key(|&(index, _)| index);
+        done.into_iter().map(|(_, result)| result).collect()
+    }
 }
 
 impl fmt::Debug for Executor {
@@ -75,6 +103,27 @@ mod tests {
         let items: Vec<u64> = (0..1000).collect();
         let squares = Executor::new(4).unwrap().map(&items, |x| x * x);
         assert_eq!(squares, items.iter().map(|x| x * x).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn map_by_cost_preserves_order() {
+        let items: Vec<u64> = (0..1000).collect();
+        for threads in [1, 4] {
+            let executor = Executor::new(threads).unwrap();
+            let squares = executor.map_by_cost(&items, |&x| x % 7, |x| x * x);
+            assert_eq!(squares, items.iter().map(|x| x * x).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn map_by_cost_starts_expensive_items_first() {
+        let started = Mutex::new(Vec::new());
+        Executor::new(1).unwrap().map_by_cost(
+            &[3_u64, 9, 1, 7],
+            |&x| x,
+            |&x| started.lock().unwrap().push(x),
+        );
+        assert_eq!(started.into_inner().unwrap(), [9, 7, 3, 1]);
     }
 
     #[test]
