@@ -70,7 +70,13 @@ impl Codec for JxlCodec {
         })
     }
 
-    fn decode(&self, data: &[u8], info: &ImageInfo, region: Rect) -> Result<Decoded> {
+    fn decode(
+        &self,
+        data: &[u8],
+        info: &ImageInfo,
+        region: Rect,
+        _color: ColorType,
+    ) -> Result<Decoded> {
         // Whole unrotated images go to jxl-rs, unless it would pick a different colour space.
         if info.region_support == RegionSupport::Tiles
             && region == info.bounds()
@@ -155,7 +161,9 @@ mod tests {
 
     fn decode_full(data: &[u8]) -> (ImageInfo, Image) {
         let info = JxlCodec.probe(data).unwrap();
-        let decoded = JxlCodec.decode(data, &info, info.bounds()).unwrap();
+        let decoded = JxlCodec
+            .decode(data, &info, info.bounds(), info.color)
+            .unwrap();
         assert_eq!(decoded.region, info.bounds());
         (info, decoded.image)
     }
@@ -247,7 +255,7 @@ mod tests {
                 Rect::new(0, h / 2, w, h / 2),
             ];
             for region in regions {
-                let part = JxlCodec.decode(data, &info, region).unwrap();
+                let part = JxlCodec.decode(data, &info, region, info.color).unwrap();
                 assert_eq!(part.region, region);
                 let expected = ops::crop(&full, region).unwrap();
                 let diff = max_abs_diff(&part.image, &expected);
@@ -261,10 +269,10 @@ mod tests {
         // Two overlapping region decodes both come from jxl-oxide, so they agree exactly.
         let info = JxlCodec.probe(LOSSY).unwrap();
         let big = JxlCodec
-            .decode(LOSSY, &info, Rect::new(100, 100, 400, 300))
+            .decode(LOSSY, &info, Rect::new(100, 100, 400, 300), info.color)
             .unwrap();
         let small = JxlCodec
-            .decode(LOSSY, &info, Rect::new(200, 200, 150, 100))
+            .decode(LOSSY, &info, Rect::new(200, 200, 150, 100), info.color)
             .unwrap();
         let inner = ops::crop(&big.image, Rect::new(100, 100, 150, 100)).unwrap();
         assert_eq!(small.image, inner);
@@ -293,7 +301,10 @@ mod tests {
         let data = &LOSSY[..LOSSY.len() / 2];
         let info = JxlCodec.probe(data).unwrap();
         assert_eq!((info.width, info.height), (600, 450));
-        let err = JxlCodec.decode(data, &info, info.bounds()).err().unwrap();
+        let err = JxlCodec
+            .decode(data, &info, info.bounds(), info.color)
+            .err()
+            .unwrap();
         assert!(matches!(
             err,
             Error::Decode {

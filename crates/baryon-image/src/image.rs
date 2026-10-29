@@ -33,6 +33,14 @@ impl ColorType {
         matches!(self, Self::La | Self::Rgba)
     }
 
+    /// Whether colour is a single luminance channel.
+    pub const fn is_gray(self) -> bool {
+        matches!(self, Self::L | Self::La)
+    }
+
+    /// Every layout, in order of channel count.
+    pub const ALL: [Self; 4] = [Self::L, Self::La, Self::Rgb, Self::Rgba];
+
     /// Conventional mode string, e.g. `"RGB"`.
     pub const fn name(self) -> &'static str {
         match self {

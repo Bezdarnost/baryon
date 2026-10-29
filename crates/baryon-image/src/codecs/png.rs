@@ -68,7 +68,13 @@ impl Codec for PngCodec {
         })
     }
 
-    fn decode(&self, data: &[u8], info: &ImageInfo, region: Rect) -> Result<Decoded> {
+    fn decode(
+        &self,
+        data: &[u8],
+        info: &ImageInfo,
+        region: Rect,
+        _color: ColorType,
+    ) -> Result<Decoded> {
         let mut reader = Self::reader(data)?;
         if info.region_support == RegionSupport::None {
             return decode_full(&mut reader, info);
@@ -190,11 +196,13 @@ mod tests {
         for (data, interlaced) in [(sequential.as_slice(), false), (ADAM7_GRADIENT, true)] {
             let info = PngCodec.probe(data).unwrap();
             assert_eq!(info.progressive, interlaced);
-            let full = PngCodec.decode(data, &info, info.bounds()).unwrap();
+            let full = PngCodec
+                .decode(data, &info, info.bounds(), info.color)
+                .unwrap();
             assert_eq!(full.image.pixels().as_bytes(), gradient(w, h).as_slice());
 
             let region = Rect::new(5, 7, 20, 10);
-            let part = PngCodec.decode(data, &info, region).unwrap();
+            let part = PngCodec.decode(data, &info, region, info.color).unwrap();
             let got = ops::crop(&part.image, part.region.relative(&region)).unwrap();
             assert_eq!(
                 got,
@@ -214,7 +222,9 @@ mod tests {
             (info.color, info.sample_type),
             (ColorType::L, SampleType::U16)
         );
-        let decoded = PngCodec.decode(&data, &info, info.bounds()).unwrap();
+        let decoded = PngCodec
+            .decode(&data, &info, info.bounds(), info.color)
+            .unwrap();
         assert_eq!(decoded.image.pixels(), &PixelBuffer::U16(samples.to_vec()));
     }
 
@@ -232,7 +242,9 @@ mod tests {
 
         let info = PngCodec.probe(&out).unwrap();
         assert_eq!(info.color, ColorType::Rgb);
-        let decoded = PngCodec.decode(&out, &info, info.bounds()).unwrap();
+        let decoded = PngCodec
+            .decode(&out, &info, info.bounds(), info.color)
+            .unwrap();
         assert_eq!(decoded.image.pixels().as_bytes(), &[255, 0, 0, 0, 0, 255]);
     }
 }

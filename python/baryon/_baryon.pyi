@@ -217,6 +217,21 @@ class Image:
         Raises:
             ValueError: A dimension is zero or the filter is unknown.
         """
+    def convert(self, mode: Mode) -> Image:
+        """Returns a new image with another channel layout.
+
+        ``mode`` is ``"L"``, ``"LA"``, ``"RGB"`` or ``"RGBA"``. Colour becomes gray with the
+        ITU-R BT.601 luma weights (0.299, 0.587, 0.114), as in Pillow, and gray becomes colour by
+        copying it into every channel. Alpha is dropped without blending, and added as fully
+        opaque.
+
+        Conversions are planned like every other operation: one that reduces the channels
+        runs before rotations and flips, and a colour JPEG converted to gray is decoded from
+        its luma plane alone, skipping all colour reconstruction.
+
+        Raises:
+            ValueError: ``mode`` is not one of the names above.
+        """
     def rotate(self, degrees: int, *, clockwise: bool = True) -> Image:
         """Returns a new image rotated by a multiple of 90 degrees, **clockwise** by default.
 

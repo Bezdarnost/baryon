@@ -201,3 +201,45 @@ def test_jpeg_pipeline(encode: Encoder) -> None:
 
     diff = np.abs(out.astype(np.int16) - full[8:24, 8:40][:, ::-1].astype(np.int16))
     assert diff.max() <= 3
+
+
+@pytest.mark.parametrize("source", ["L", "LA", "RGB", "RGBA"])
+@pytest.mark.parametrize("target", ["L", "LA", "RGB", "RGBA"])
+def test_convert_matches_pillow(encode: Encoder, source: str, target: str) -> None:
+    channels = {"L": 1, "LA": 2, "RGB": 3, "RGBA": 4}
+    pixels = gradient(37, 23, channels[source])
+    if source in {"LA", "RGBA"}:
+        pixels[..., -1] = (np.arange(37) * 7 % 256).astype(np.uint8)  # varied alpha
+    image = baryon.open(encode(pixels, "PNG")).convert(target)  # type: ignore[arg-type]
+
+    pil = PILImage.fromarray(pixels.squeeze(axis=2) if pixels.shape[2] == 1 else pixels, source)
+    expected = np.asarray(pil.convert(target))
+    assert image.mode == target
+    np.testing.assert_array_equal(image.to_numpy(), expected.reshape(image.shape))
+
+
+def test_conversions_compose_with_geometry(encode: Encoder) -> None:
+    pixels = gradient(64, 48, 4)
+    source = baryon.open(encode(pixels, "PNG"))
+    image = source.crop(8, 4, 40, 30).rotate(90).convert("RGB").flip_horizontal().convert("LA")
+
+    expected = source.crop(8, 4, 40, 30).convert("RGB").convert("LA").rotate(90).flip_horizontal()
+    np.testing.assert_array_equal(image.to_numpy(), expected.to_numpy())
+    # RGB dropped the alpha channel, so the final alpha is opaque.
+    assert (image.to_numpy()[..., 1] == 255).all()
+    assert "convert RGBA -> LA" in image.explain()
+
+
+def test_gray_jpegs_decode_from_the_luma_plane(encode: Encoder) -> None:
+    jpeg = encode(gradient(96, 64), "JPEG", quality=95)
+    image = baryon.open(jpeg).convert("L")
+
+    assert "decoded directly as L" in image.explain()
+    expected = np.asarray(PILImage.open(io.BytesIO(jpeg)).convert("L"))
+    np.testing.assert_allclose(image.to_numpy()[..., 0], expected, atol=4, rtol=0)
+
+
+def test_convert_rejects_unknown_modes(encode: Encoder) -> None:
+    image = baryon.open(encode(gradient(8, 8), "PNG"))
+    with pytest.raises(ValueError, match="unknown mode"):
+        image.convert("CMYK")  # type: ignore[arg-type]

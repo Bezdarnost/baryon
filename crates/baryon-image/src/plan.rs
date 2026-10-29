@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::codecs::{self, ImageInfo, RegionStrategy};
 use crate::geometry::{Orientation, Rect, Rotation};
 use crate::image::{ColorType, Image, SampleType};
-use crate::ops::{self, Op, ResizeFilter};
+use crate::ops::{self, ColorConversion, Op, ResizeFilter};
 use baryon_core::Format;
 use baryon_core::{Error, Result};
 
@@ -74,17 +74,20 @@ pub struct LazyImage {
     ops: Vec<Op>,
     width: u32,
     height: u32,
+    color: ColorType,
 }
 
 impl LazyImage {
     /// Starts an empty pipeline over `source`.
     pub fn new(source: Arc<Source>) -> Self {
         let (width, height) = source.info().display_size();
+        let color = source.info().color;
         Self {
             source,
             ops: Vec::new(),
             width,
             height,
+            color,
         }
     }
 
@@ -124,8 +127,8 @@ impl LazyImage {
     }
 
     /// Output channel layout.
-    pub fn color(&self) -> ColorType {
-        self.info().color
+    pub const fn color(&self) -> ColorType {
+        self.color
     }
 
     /// Output sample type.
@@ -187,6 +190,14 @@ impl LazyImage {
         ))
     }
 
+    /// Records a change of channel layout; see [`ColorConversion`] for the rules.
+    #[must_use]
+    pub fn convert(&self, color: ColorType) -> Self {
+        let mut image = self.push(Op::Convert(color), self.width, self.height);
+        image.color = color;
+        image
+    }
+
     fn push(&self, op: Op, width: u32, height: u32) -> Self {
         let mut ops = Vec::with_capacity(self.ops.len() + 1);
         ops.extend_from_slice(&self.ops);
@@ -196,6 +207,7 @@ impl LazyImage {
             ops,
             width,
             height,
+            color: self.color,
         }
     }
 
@@ -249,6 +261,8 @@ pub enum Step {
         /// Resampling filter.
         filter: ResizeFilter,
     },
+    /// Change the channel layout.
+    Convert(ColorConversion),
 }
 
 impl fmt::Display for Step {
@@ -261,6 +275,7 @@ impl fmt::Display for Step {
                 height,
                 filter,
             } => write!(f, "resize {width}x{height} ({filter})"),
+            Self::Convert(conversion) => write!(f, "convert {conversion}"),
         }
     }
 }
@@ -271,6 +286,7 @@ pub struct PhysicalPlan {
     info: ImageInfo,
     region: Rect,
     strategy: RegionStrategy,
+    decode_color: ColorType,
     steps: Vec<Step>,
 }
 
@@ -278,9 +294,10 @@ impl PhysicalPlan {
     fn new(info: &ImageInfo, ops: &[Op]) -> Self {
         // The stored orientation is the first transform of the first run, so crops after it
         // still become a decode region in stored coordinates.
-        let mut geometry = Geometry::new(info.width, info.height);
+        let mut geometry = Geometry::new(info.width, info.height, info.color);
         geometry.orientation = info.orientation;
         let mut region = None;
+        let mut decode_color = info.color;
         let mut steps = Vec::new();
 
         for op in ops {
@@ -293,12 +310,17 @@ impl PhysicalPlan {
                     geometry.orientation = geometry.orientation.then_flip_vertical();
                 }
                 Op::Rotate(r) => geometry.orientation = geometry.orientation.then_rotate(r),
+                Op::Convert(color) => geometry.conversion = geometry.conversion.then(color),
                 Op::Resize {
                     width,
                     height,
                     filter,
                 } => {
                     let (w, h) = geometry.output_size();
+                    let color = geometry.conversion.to();
+                    if region.is_none() {
+                        decode_color = geometry.push_conversion_into_decoder(info);
+                    }
                     geometry.flush(&mut region, &mut steps);
                     if (w, h) != (width, height) {
                         steps.push(Step::Resize {
@@ -307,9 +329,12 @@ impl PhysicalPlan {
                             filter,
                         });
                     }
-                    geometry = Geometry::new(width, height);
+                    geometry = Geometry::new(width, height, color);
                 }
             }
+        }
+        if region.is_none() {
+            decode_color = geometry.push_conversion_into_decoder(info);
         }
         geometry.flush(&mut region, &mut steps);
 
@@ -318,6 +343,7 @@ impl PhysicalPlan {
             info: *info,
             region,
             strategy: RegionStrategy::new(info, region),
+            decode_color,
             steps,
         }
     }
@@ -337,6 +363,12 @@ impl PhysicalPlan {
         self.strategy
     }
 
+    /// Channel layout requested from the decoder; differs from the source's when the decoder
+    /// can produce a conversion directly, such as a JPEG's luma plane.
+    pub const fn decode_color(&self) -> ColorType {
+        self.decode_color
+    }
+
     /// In-memory steps run after decoding.
     pub fn steps(&self) -> &[Step] {
         &self.steps
@@ -345,7 +377,15 @@ impl PhysicalPlan {
     /// Runs the plan against the encoded bytes it was built for.
     pub fn execute(&self, data: &[u8]) -> Result<Image> {
         let codec = codecs::codec_for(self.info.format)?;
-        let decoded = codec.decode(data, &self.info, self.region)?;
+        let decoded = codec.decode(data, &self.info, self.region, self.decode_color)?;
+        if decoded.image.color() != self.decode_color {
+            return Err(Error::Internal(format!(
+                "{} decoder produced {} for a request of {}",
+                self.info.format,
+                decoded.image.color(),
+                self.decode_color
+            )));
+        }
         if !decoded.region.contains(&self.region) {
             return Err(Error::Internal(format!(
                 "{} decoder returned region {} for request {}",
@@ -366,6 +406,7 @@ impl PhysicalPlan {
                     height,
                     filter,
                 } => ops::resize(&image, width, height, filter)?,
+                Step::Convert(conversion) => ops::convert_color(&image, conversion)?,
             };
         }
         Ok(image)
@@ -383,6 +424,9 @@ impl fmt::Display for PhysicalPlan {
         if self.region != info.bounds() {
             writeln!(f, "  region {} ({})", self.region, self.strategy)?;
         }
+        if self.decode_color != info.color {
+            writeln!(f, "  decoded directly as {}", self.decode_color)?;
+        }
         for step in &self.steps {
             writeln!(f, "{step}")?;
         }
@@ -390,24 +434,39 @@ impl fmt::Display for PhysicalPlan {
     }
 }
 
-/// Accumulated crops and orientation for one run of geometric ops.
+/// Accumulated crops, orientation and colour conversions for one run of ops between resizes.
 ///
 /// `window` is a rectangle of the run's input image and `orientation` maps output coordinates
 /// into that window. Output pixel `(x, y)` is input pixel `window.origin + orientation(x, y)`.
+/// Conversions act on each pixel independently, so they commute with the geometry and the
+/// run's conversions fuse into one, placed wherever it moves the least data.
 struct Geometry {
     input_width: u32,
     input_height: u32,
     window: Rect,
     orientation: Orientation,
+    conversion: ColorConversion,
 }
 
 impl Geometry {
-    const fn new(width: u32, height: u32) -> Self {
+    const fn new(width: u32, height: u32, color: ColorType) -> Self {
         Self {
             input_width: width,
             input_height: height,
             window: Rect::from_size(width, height),
             orientation: Orientation::IDENTITY,
+            conversion: ColorConversion::identity(color),
+        }
+    }
+
+    /// For the first run: lets the decoder produce the gray conversion itself when it can,
+    /// and returns the layout to request from it.
+    fn push_conversion_into_decoder(&mut self, info: &ImageInfo) -> ColorType {
+        if self.conversion.collapses_to_gray() && codecs::decodes_luma(info) {
+            self.conversion = self.conversion.with_luma_input();
+            ColorType::L
+        } else {
+            info.color
         }
     }
 
@@ -437,8 +496,16 @@ impl Geometry {
         } else if self.window != full {
             steps.push(Step::Crop(self.window));
         }
+        let convert = (!self.conversion.is_identity()).then_some(Step::Convert(self.conversion));
+        // Shrinking conversions run before the orientation pass, growing ones after it.
+        if self.conversion.shrinks() {
+            steps.extend(convert);
+        }
         if !self.orientation.is_identity() {
             steps.push(Step::Orient(self.orientation));
+        }
+        if !self.conversion.shrinks() {
+            steps.extend(convert);
         }
     }
 }

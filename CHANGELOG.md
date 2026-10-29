@@ -17,6 +17,8 @@ All notable changes to baryon are documented here. The format follows
   Untransformed JPEGs are transcoded losslessly (about 20% smaller, restorable bit for bit).
 - PNG and JPEG encoding (`Image.to_png`, `Image.to_jpeg`), `Image.save` with the format taken
   from the extension, and `save_all` to convert many files on all cores.
+- `Image.convert(mode)` for `L`, `LA`, `RGB` and `RGBA`, planned with the other operations;
+  colour JPEGs converted to gray are decoded from their luma plane alone.
 - EXIF orientation of JPEG and PNG files is applied, fused with the pipeline's own rotations.
   JPEGs and their JPEG XL transcodes now display identically.
 - Multi-core execution on a shared thread pool: `open_all`, `to_numpy_all`,

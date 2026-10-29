@@ -7,7 +7,7 @@ use fast_image_resize::{self as fir, FilterType, PixelType, ResizeAlg, ResizeOpt
 use rayon::prelude::*;
 
 use crate::geometry::{Orientation, Rect, Rotation};
-use crate::image::{ColorType, Image, SampleType};
+use crate::image::{ColorType, Image, PixelBuffer, SampleType};
 use baryon_core::{Error, Result};
 
 /// A single transformation recorded in a lazy pipeline.
@@ -30,6 +30,8 @@ pub enum Op {
         /// Resampling filter.
         filter: ResizeFilter,
     },
+    /// Change the channel layout; see [`ColorConversion`].
+    Convert(ColorType),
 }
 
 impl fmt::Display for Op {
@@ -44,7 +46,108 @@ impl fmt::Display for Op {
                 height,
                 filter,
             } => write!(f, "resize {width}x{height} ({filter})"),
+            Self::Convert(color) => write!(f, "convert {color}"),
         }
+    }
+}
+
+/// A change of channel layout, possibly the composition of several [`Op::Convert`]s.
+///
+/// * Colour to gray computes luma with the ITU-R BT.601 weights (0.299, 0.587, 0.114), as
+///   JPEG and Pillow do; gray to colour copies the value into every channel.
+/// * Dropping alpha discards it without blending; adding alpha makes every pixel opaque.
+///
+/// Composition remembers what was lost on the way: converting RGBA to RGB and back to RGBA
+/// yields an opaque image, and RGB to L to RGB yields a gray one, exactly as running the
+/// conversions one by one would.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ColorConversion {
+    from: ColorType,
+    to: ColorType,
+    /// A conversion to gray happened along the way.
+    gray: bool,
+    /// A conversion without alpha happened along the way.
+    alpha_lost: bool,
+}
+
+impl ColorConversion {
+    /// The conversion that changes nothing.
+    pub const fn identity(color: ColorType) -> Self {
+        Self {
+            from: color,
+            to: color,
+            gray: false,
+            alpha_lost: false,
+        }
+    }
+
+    /// This conversion followed by a conversion to `to`.
+    #[must_use]
+    pub const fn then(self, to: ColorType) -> Self {
+        Self {
+            from: self.from,
+            to,
+            gray: self.gray || to.is_gray(),
+            alpha_lost: self.alpha_lost || !to.has_alpha(),
+        }
+    }
+
+    /// Input layout.
+    pub const fn from(self) -> ColorType {
+        self.from
+    }
+
+    /// Output layout.
+    pub const fn to(self) -> ColorType {
+        self.to
+    }
+
+    /// Whether colour information is replaced by luma.
+    pub const fn collapses_to_gray(self) -> bool {
+        self.gray && !self.from.is_gray()
+    }
+
+    /// Whether the output alpha channel, if any, comes from the input.
+    pub const fn keeps_alpha(self) -> bool {
+        self.from.has_alpha() && !self.alpha_lost
+    }
+
+    /// Whether pixels are left unchanged.
+    pub const fn is_identity(self) -> bool {
+        self.to as u8 == self.from as u8
+            && !self.collapses_to_gray()
+            && (self.keeps_alpha() || !self.from.has_alpha())
+    }
+
+    /// Whether the output has fewer channels than the input, so the conversion is best run
+    /// before other work rather than after it.
+    pub const fn shrinks(self) -> bool {
+        self.to.channels() < self.from.channels()
+    }
+
+    /// The same conversion applied to the luma plane of a colour input instead, which the
+    /// caller guarantees is what this conversion would compute: used when a decoder can
+    /// produce luma directly.
+    pub(crate) const fn with_luma_input(self) -> Self {
+        Self {
+            from: ColorType::L,
+            to: self.to,
+            gray: true,
+            alpha_lost: self.alpha_lost,
+        }
+    }
+}
+
+impl fmt::Display for ColorConversion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} -> {}", self.from, self.to)?;
+        if self.collapses_to_gray() && !self.to.is_gray() {
+            f.write_str(" (gray)")?;
+        }
+        if self.to.has_alpha() && !self.keeps_alpha() {
+            f.write_str(" (opaque)")?;
+        }
+        Ok(())
     }
 }
 
@@ -185,6 +288,118 @@ pub fn orient(image: Image, orientation: Orientation) -> Result<Image> {
     Ok(out)
 }
 
+/// Converts `image` to `to`; see [`ColorConversion`].
+pub fn convert(image: &Image, to: ColorType) -> Result<Image> {
+    convert_color(image, ColorConversion::identity(image.color()).then(to))
+}
+
+/// Applies a composed conversion, whose input must match the image.
+pub fn convert_color(image: &Image, conversion: ColorConversion) -> Result<Image> {
+    if conversion.from() != image.color() {
+        return Err(Error::Internal(format!(
+            "conversion {conversion} applied to a {} image",
+            image.color()
+        )));
+    }
+    if conversion.is_identity() {
+        return Ok(image.clone());
+    }
+    let mut out = Image::zeroed(
+        image.width(),
+        image.height(),
+        conversion.to(),
+        image.sample_type(),
+    )?;
+    let pixels = image.width() as usize;
+    match (image.pixels(), out.pixels_mut()) {
+        (PixelBuffer::U8(src), PixelBuffer::U8(dst)) => {
+            convert_samples(src, dst, pixels, conversion);
+        }
+        (PixelBuffer::U16(src), PixelBuffer::U16(dst)) => {
+            convert_samples(src, dst, pixels, conversion);
+        }
+        _ => return Err(Error::Internal("sample types differ".into())),
+    }
+    Ok(out)
+}
+
+/// An 8- or 16-bit sample.
+trait Sample: Copy + Send + Sync + Into<u64> {
+    const MAX: Self;
+    fn from_u64(value: u64) -> Self;
+}
+
+impl Sample for u8 {
+    const MAX: Self = Self::MAX;
+    fn from_u64(value: u64) -> Self {
+        Self::try_from(value).unwrap_or(Self::MAX)
+    }
+}
+
+impl Sample for u16 {
+    const MAX: Self = Self::MAX;
+    fn from_u64(value: u64) -> Self {
+        Self::try_from(value).unwrap_or(Self::MAX)
+    }
+}
+
+/// BT.601 luma in 16-bit fixed point; the weights sum to 65536, so white stays white.
+fn luma<T: Sample>(r: T, g: T, b: T) -> T {
+    T::from_u64((19_595 * r.into() + 38_470 * g.into() + 7_471 * b.into() + 32_768) >> 16)
+}
+
+/// Converts rows of `row_pixels` pixels in parallel.
+fn convert_samples<T: Sample>(
+    src: &[T],
+    dst: &mut [T],
+    row_pixels: usize,
+    conversion: ColorConversion,
+) {
+    let (from, to) = (conversion.from(), conversion.to());
+    let (src_channels, dst_channels) = (from.channels(), to.channels());
+    let gray = conversion.collapses_to_gray();
+    let keep_alpha = conversion.keeps_alpha();
+    let dst_row = row_pixels * dst_channels;
+    dst.par_chunks_exact_mut(dst_row)
+        .zip(src.par_chunks_exact(row_pixels * src_channels))
+        .with_min_len(rows_per_task(dst_row * size_of::<T>()))
+        .for_each(|(dst_row, src_row)| {
+            for (out, px) in dst_row
+                .chunks_exact_mut(dst_channels)
+                .zip(src_row.chunks_exact(src_channels))
+            {
+                let (r, g, b) = if from.is_gray() {
+                    (px[0], px[0], px[0])
+                } else {
+                    (px[0], px[1], px[2])
+                };
+                let alpha = if keep_alpha {
+                    px[src_channels - 1]
+                } else {
+                    T::MAX
+                };
+                let value = if gray { luma(r, g, b) } else { r };
+                match to {
+                    ColorType::L => out[0] = value,
+                    ColorType::La => {
+                        out[0] = value;
+                        out[1] = alpha;
+                    }
+                    ColorType::Rgb | ColorType::Rgba => {
+                        if gray {
+                            out[..3].fill(value);
+                        } else {
+                            out[..3].copy_from_slice(&[r, g, b]);
+                        }
+                        if to == ColorType::Rgba {
+                            out[3] = alpha;
+                        }
+                    }
+                }
+            }
+        });
+}
+
 /// Rows handed to one parallel task: enough bytes that scheduling overhead stays negligible,
 /// so small images are processed on a single thread.
 fn rows_per_task(row_bytes: usize) -> usize {
@@ -253,8 +468,6 @@ fn resize_error(err: impl std::error::Error) -> Error {
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation, reason = "test images are small")]
 pub(crate) fn coordinate_image(width: u32, height: u32) -> Image {
-    use crate::image::PixelBuffer;
-
     let pixels = (0..height)
         .flat_map(|y| (0..width).flat_map(move |x| [x as u16, y as u16]))
         .collect();
@@ -264,7 +477,6 @@ pub(crate) fn coordinate_image(width: u32, height: u32) -> Image {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::image::PixelBuffer;
 
     fn pixel(image: &Image, x: u32, y: u32) -> (u16, u16) {
         let PixelBuffer::U16(p) = image.pixels() else {
@@ -319,6 +531,68 @@ mod tests {
         let img = Image::new(8, 8, ColorType::Rgb, PixelBuffer::U8(vec![77; 8 * 8 * 3])).unwrap();
         let out = resize(&img, 3, 5, ResizeFilter::Lanczos3).unwrap();
         assert!(out.pixels().as_bytes().iter().all(|&v| v == 77));
+    }
+
+    fn rgba8(pixels: &[[u8; 4]]) -> Image {
+        let width = u32::try_from(pixels.len()).unwrap();
+        Image::new(width, 1, ColorType::Rgba, PixelBuffer::U8(pixels.concat())).unwrap()
+    }
+
+    #[test]
+    fn luma_uses_bt601_weights() {
+        let image = rgba8(&[[255, 0, 0, 9], [0, 255, 0, 9], [0, 0, 255, 9], [255; 4]]);
+        let gray = convert(&image, ColorType::La).unwrap();
+        // 0.299, 0.587 and 0.114 of 255, rounded; alpha is kept.
+        assert_eq!(gray.pixels().as_bytes(), [76, 9, 150, 9, 29, 9, 255, 255]);
+        let l16 = convert(
+            &Image::new(1, 1, ColorType::Rgb, PixelBuffer::U16(vec![65535; 3])).unwrap(),
+            ColorType::L,
+        )
+        .unwrap();
+        assert_eq!(l16.pixels(), &PixelBuffer::U16(vec![65535]));
+    }
+
+    #[test]
+    fn conversions_compose_like_sequential_ones() {
+        let image = rgba8(&[[10, 200, 30, 40], [255, 128, 0, 7]]);
+        for path in [
+            [ColorType::Rgb, ColorType::Rgba, ColorType::La],
+            [ColorType::L, ColorType::Rgba, ColorType::Rgb],
+            [ColorType::La, ColorType::Rgb, ColorType::Rgba],
+            [ColorType::Rgba, ColorType::Rgba, ColorType::Rgba],
+        ] {
+            let sequential = path
+                .iter()
+                .fold(image.clone(), |img, &to| convert(&img, to).unwrap());
+            let composed = path
+                .iter()
+                .fold(ColorConversion::identity(ColorType::Rgba), |c, &to| {
+                    c.then(to)
+                });
+            assert_eq!(
+                convert_color(&image, composed).unwrap(),
+                sequential,
+                "{path:?}"
+            );
+        }
+        assert!(
+            ColorConversion::identity(ColorType::Rgba)
+                .then(ColorType::Rgba)
+                .is_identity()
+        );
+        assert!(
+            !ColorConversion::identity(ColorType::Rgba)
+                .then(ColorType::Rgb)
+                .then(ColorType::Rgba)
+                .is_identity()
+        );
+    }
+
+    #[test]
+    fn gray_expands_to_every_channel() {
+        let image = Image::new(2, 1, ColorType::L, PixelBuffer::U8(vec![3, 250])).unwrap();
+        let rgba = convert(&image, ColorType::Rgba).unwrap();
+        assert_eq!(rgba.pixels().as_bytes(), [3, 3, 3, 255, 250, 250, 250, 255]);
     }
 
     #[test]

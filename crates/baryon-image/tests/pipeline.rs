@@ -13,12 +13,42 @@ fn coordinate_png(width: u32, height: u32) -> Vec<u8> {
 
 /// [`coordinate_png`] with an `eXIf` chunk holding the given EXIF orientation.
 fn oriented_coordinate_png(width: u32, height: u32, exif_orientation: Option<u16>) -> Vec<u8> {
-    let samples: Vec<u8> = (0..height)
-        .flat_map(|y| (0..width).flat_map(move |x| [x, y]))
+    let samples = (0..height).flat_map(|y| (0..width).flat_map(move |x| [x, y]));
+    sixteen_bit_png(
+        width,
+        height,
+        png::ColorType::GrayscaleAlpha,
+        samples,
+        exif_orientation,
+    )
+}
+
+/// A 16-bit RGBA PNG whose pixel `(x, y)` is `[x, y, x * y, 1000 + x + y]`: distinct colour
+/// channels, so conversions to gray compute real luma values.
+fn colour_png(width: u32, height: u32, exif_orientation: Option<u16>) -> Vec<u8> {
+    let samples =
+        (0..height).flat_map(|y| (0..width).flat_map(move |x| [x, y, x * y, 1000 + x + y]));
+    sixteen_bit_png(
+        width,
+        height,
+        png::ColorType::Rgba,
+        samples,
+        exif_orientation,
+    )
+}
+
+fn sixteen_bit_png(
+    width: u32,
+    height: u32,
+    color: png::ColorType,
+    samples: impl Iterator<Item = u32>,
+    exif_orientation: Option<u16>,
+) -> Vec<u8> {
+    let samples: Vec<u8> = samples
         .flat_map(|v| u16::try_from(v).unwrap().to_be_bytes())
         .collect();
     let mut info = png::Info::with_size(width, height);
-    info.color_type = png::ColorType::GrayscaleAlpha;
+    info.color_type = color;
     info.bit_depth = png::BitDepth::Sixteen;
     info.exif_metadata = exif_orientation.map(|value| exif_block(value).into());
     let mut out = Vec::new();
@@ -65,19 +95,20 @@ fn exif_ops(orientation: u16) -> Vec<Op> {
 /// Deliberately simple reference implementations, independent of the optimizer's group algebra.
 fn naive(image: &Image, op: Op) -> Image {
     let (w, h) = (image.width(), image.height());
+    let channels = image.color().channels();
     let remap = |ow: u32, oh: u32, src: &dyn Fn(u32, u32) -> (u32, u32)| {
         let PixelBuffer::U16(px) = image.pixels() else {
             unreachable!("test images are 16-bit")
         };
-        let mut out = Vec::with_capacity((ow * oh * 2) as usize);
+        let mut out = Vec::with_capacity(ow as usize * oh as usize * channels);
         for y in 0..oh {
             for x in 0..ow {
                 let (sx, sy) = src(x, y);
-                let idx = ((sy * w + sx) * 2) as usize;
-                out.extend_from_slice(&px[idx..idx + 2]);
+                let idx = (sy * w + sx) as usize * channels;
+                out.extend_from_slice(&px[idx..idx + channels]);
             }
         }
-        Image::new(ow, oh, ColorType::La, PixelBuffer::U16(out)).unwrap()
+        Image::new(ow, oh, image.color(), PixelBuffer::U16(out)).unwrap()
     };
     match op {
         Op::Crop(rect) => ops::crop(image, rect).unwrap(),
@@ -91,6 +122,7 @@ fn naive(image: &Image, op: Op) -> Image {
             height,
             filter,
         } => ops::resize(image, width, height, filter).unwrap(),
+        Op::Convert(color) => ops::convert(image, color).unwrap(),
     }
 }
 
@@ -113,7 +145,7 @@ impl XorShift {
 
 fn random_op(rng: &mut XorShift, image: &LazyImage, allow_resize: bool) -> LazyImage {
     let (w, h) = (image.width(), image.height());
-    match rng.range(0, if allow_resize { 5 } else { 4 }) {
+    match rng.range(0, if allow_resize { 6 } else { 5 }) {
         0 if w > 1 && h > 1 => {
             let cw = rng.range(1, w);
             let ch = rng.range(1, h);
@@ -125,6 +157,7 @@ fn random_op(rng: &mut XorShift, image: &LazyImage, allow_resize: bool) -> LazyI
         3 => image
             .rotate([Rotation::Cw90, Rotation::Cw180, Rotation::Cw270][rng.range(0, 2) as usize]),
         4 => image.flip_horizontal().rotate(Rotation::Cw90),
+        5 => image.convert(ColorType::ALL[rng.range(0, 3) as usize]),
         _ => image
             .resize(
                 rng.range(1, 2 * w),
@@ -135,10 +168,14 @@ fn random_op(rng: &mut XorShift, image: &LazyImage, allow_resize: bool) -> LazyI
     }
 }
 
-fn check_random_pipelines(allow_resize: bool, seed: u64, exif_orientation: u16) {
-    let source =
-        LazyImage::from_bytes(oriented_coordinate_png(23, 17, Some(exif_orientation))).unwrap();
-    let stored = LazyImage::from_bytes(coordinate_png(23, 17))
+fn check_random_pipelines(allow_resize: bool, seed: u64, exif_orientation: u16, colour: bool) {
+    let png = if colour {
+        colour_png
+    } else {
+        oriented_coordinate_png
+    };
+    let source = LazyImage::from_bytes(png(23, 17, Some(exif_orientation))).unwrap();
+    let stored = LazyImage::from_bytes(png(23, 17, None))
         .unwrap()
         .execute()
         .unwrap();
@@ -172,8 +209,9 @@ fn check_random_pipelines(allow_resize: bool, seed: u64, exif_orientation: u16) 
 #[test]
 fn geometric_pipelines_match_naive_execution() {
     for orientation in 1..=8 {
-        check_random_pipelines(false, 0x5EED_0001, orientation);
+        check_random_pipelines(false, 0x5EED_0001, orientation, false);
     }
+    check_random_pipelines(false, 0x5EED_0003, 7, true);
 }
 
 /// Large enough that crops and orientations are split across threads.
@@ -211,8 +249,10 @@ fn parallel_geometry_matches_naive_execution() {
 #[test]
 fn pipelines_with_resize_match_naive_execution() {
     for orientation in 1..=8 {
-        check_random_pipelines(true, 0x5EED_0002, orientation);
+        check_random_pipelines(true, 0x5EED_0002, orientation, false);
     }
+    check_random_pipelines(true, 0x5EED_0004, 1, true);
+    check_random_pipelines(true, 0x5EED_0005, 6, true);
 }
 
 #[test]
@@ -284,4 +324,76 @@ fn invalid_arguments_are_rejected_eagerly() {
     assert!(image.crop(Rect::new(0, 0, 0, 1)).is_err());
     assert!(image.resize(0, 4, ResizeFilter::Nearest).is_err());
     assert!(LazyImage::from_bytes(b"not an image".to_vec()).is_err());
+}
+
+#[test]
+fn conversions_fuse_and_move_to_the_cheaper_side() {
+    let image = LazyImage::from_bytes(colour_png(40, 30, None))
+        .unwrap()
+        .convert(ColorType::Rgb)
+        .rotate(Rotation::Cw90)
+        .convert(ColorType::L);
+    let plan = image.plan();
+    assert_eq!(plan.steps().len(), 2, "{plan}");
+    assert!(
+        matches!(plan.steps()[0], baryon_image::Step::Convert(c) if c.to() == ColorType::L),
+        "the shrinking conversion runs before the orientation pass:\n{plan}"
+    );
+
+    let grown = LazyImage::from_bytes(coordinate_png(40, 30))
+        .unwrap()
+        .convert(ColorType::Rgba)
+        .flip_vertical();
+    let plan = grown.plan();
+    assert!(
+        matches!(plan.steps().last(), Some(baryon_image::Step::Convert(_))),
+        "the growing conversion runs after the orientation pass:\n{plan}"
+    );
+    assert_eq!(grown.color(), ColorType::Rgba);
+}
+
+#[test]
+fn gray_jpegs_are_decoded_as_luma() {
+    let (width, height) = (64_u16, 48_u16);
+    let pixels: Vec<u8> = (0..u32::from(height))
+        .flat_map(|y| (0..u32::from(width)).flat_map(move |x| [x * 4, y * 5, (x ^ y) * 3]))
+        .map(|v| u8::try_from(v % 256).unwrap())
+        .collect();
+    let mut jpeg = Vec::new();
+    jpeg_encoder::Encoder::new(&mut jpeg, 95)
+        .encode(&pixels, width, height, jpeg_encoder::ColorType::Rgb)
+        .unwrap();
+
+    let source = LazyImage::from_bytes(jpeg).unwrap();
+    let gray = source
+        .convert(ColorType::L)
+        .crop(Rect::new(4, 4, 32, 16))
+        .unwrap();
+    let plan = gray.plan();
+    assert_eq!(plan.decode_color(), ColorType::L);
+    assert!(plan.steps().is_empty(), "{plan}");
+
+    // The JPEG's own luma plane and luma computed from its decoded RGB agree to rounding.
+    let direct = gray.execute().unwrap();
+    let via_rgb = ops::convert(
+        &source
+            .crop(Rect::new(4, 4, 32, 16))
+            .unwrap()
+            .execute()
+            .unwrap(),
+        ColorType::L,
+    )
+    .unwrap();
+    let worst = direct
+        .pixels()
+        .as_bytes()
+        .iter()
+        .zip(via_rgb.pixels().as_bytes())
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap();
+    assert!(
+        worst <= 3,
+        "luma plane differs from converted RGB by {worst}"
+    );
 }

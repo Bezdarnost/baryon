@@ -36,13 +36,15 @@ signal where time ranges and resampling play the role of crops and resizes.
 - [ ] JPEG: skip blocks outside a crop, decode at 1/2, 1/4 and 1/8 scale
 - [ ] JPEG XL: region decoding for rotated files, progressive previews
 - [x] EXIF orientation for JPEG and PNG
+- [x] channel conversions (L, LA, RGB, RGBA) inside the plan; JPEG luma-only decoding
+- [x] PNG and JPEG writing, `save` and parallel `save_all`
 - [ ] ICC colour management for JPEG and PNG
 
 **Next**
 
 - [ ] AVIF and WebP decoding
 - [ ] resize pushdown: decode JPEG XL and JPEG directly at a reduced scale
-- [ ] colour conversions (grayscale, RGB/BGR, float output) inside the plan
+- [ ] BGR and float output inside the plan
 - [ ] PyTorch tensor output via DLPack
 
 ## Video (future)

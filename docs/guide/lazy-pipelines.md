@@ -1,7 +1,7 @@
 # Lazy pipelines
 
 An `Image` is an immutable recipe: the encoded source plus a list of transformations. Calling
-`crop`, `resize`, `rotate` or `flip_*` returns a new recipe and does no work. Pixels are
+`crop`, `resize`, `rotate`, `flip_*` or `convert` returns a new recipe and does no work. Pixels are
 produced only by `to_numpy()`, `numpy.asarray(image)` or `baryon.to_numpy_all(...)`.
 
 Because the whole pipeline is known before anything is decoded, baryon can plan it.
@@ -20,8 +20,14 @@ Because the whole pipeline is known before anything is decoded, baryon can plan 
     | PNG | all rows after the region's last row |
     | JPEG | nothing yet; the image is decoded and trimmed |
 
-3. **Orients once.** All flips and rotations become a single pass over the pixels.
-4. **Drops no-ops.** Two flips cancel, a resize to the current size disappears.
+3. **Orients once.** All flips and rotations, including the file's EXIF orientation, become a
+   single pass over the pixels.
+4. **Converts once, on the cheaper side.** Channel conversions fuse into one. A conversion to
+   fewer channels runs before the orientation pass and a conversion to more channels after
+   it, so the pass moves as little data as possible. A colour JPEG converted to `"L"` is
+   decoded from its luma plane alone.
+5. **Drops no-ops.** Two flips cancel, a resize to the current size disappears, and converting
+   to the current mode does nothing.
 
 ## Seeing the plan
 
@@ -45,10 +51,31 @@ resize 256x256 (lanczos3)
 
 Rectangles are written `WIDTHxHEIGHT+X+Y`.
 
+A grayscale thumbnail of a JPEG shows the conversion moving into the decoder:
+
+```python
+>>> print(baryon.open("photo.jpg").convert("L").rotate(90).resize(224, 224).explain())
+decode jpeg 4000x3000 RGB uint8
+  decoded directly as L
+orient transpose+flip_y
+resize 224x224 (lanczos3)
+```
+
 ## Correctness
 
 The optimizer is tested against a deliberately naive implementation that applies every
 recorded step one at a time: thousands of random pipelines must produce identical pixels.
+
+## Channel conversions
+
+`convert(mode)` changes the channel layout to `"L"`, `"LA"`, `"RGB"` or `"RGBA"`:
+
+- colour to gray uses the ITU-R BT.601 luma weights, exactly like Pillow's `convert("L")`;
+- gray to colour copies the value into every channel;
+- dropping alpha discards it without blending; adding alpha makes every pixel opaque.
+
+Use it to normalize a mixed dataset before batching: `[im.convert("RGB") for im in images]`
+gives every array three channels, whatever the files contain.
 
 ## Resizing
 

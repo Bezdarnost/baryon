@@ -63,15 +63,26 @@ impl Codec for JpegCodec {
         })
     }
 
-    fn decode(&self, data: &[u8], info: &ImageInfo, _region: Rect) -> Result<Decoded> {
-        let mut decoder =
-            JpegDecoder::new_with_options(ZCursor::new(data), Self::options(info.color));
+    fn decode(
+        &self,
+        data: &[u8],
+        info: &ImageInfo,
+        _region: Rect,
+        color: ColorType,
+    ) -> Result<Decoded> {
+        let mut decoder = JpegDecoder::new_with_options(ZCursor::new(data), Self::options(color));
         let pixels = decoder.decode().map_err(jpeg_error)?;
-        let image = Image::new(info.width, info.height, info.color, PixelBuffer::U8(pixels))?;
+        let image = Image::new(info.width, info.height, color, PixelBuffer::U8(pixels))?;
         Ok(Decoded {
             image,
             region: info.bounds(),
         })
+    }
+
+    /// The luma plane of a YCbCr JPEG is stored as is, so gray output skips the chroma
+    /// planes' inverse DCT, upsampling and colour conversion.
+    fn decodes_luma(&self, info: &ImageInfo) -> bool {
+        info.color == ColorType::Rgb
     }
 }
 
@@ -123,7 +134,9 @@ mod tests {
         let data = encode(8, 8, jpeg_encoder::ColorType::Luma, &[200; 64]);
         let info = JpegCodec.probe(&data).unwrap();
         assert_eq!(info.color, ColorType::L);
-        let decoded = JpegCodec.decode(&data, &info, info.bounds()).unwrap();
+        let decoded = JpegCodec
+            .decode(&data, &info, info.bounds(), info.color)
+            .unwrap();
         assert_eq!(decoded.image.pixels().len(), 64);
         assert!(
             decoded

@@ -125,8 +125,25 @@ pub(crate) trait Codec: Sync {
     fn probe(&self, data: &[u8]) -> Result<ImageInfo>;
 
     /// Decodes at least `region`, which must lie within the image bounds, following
-    /// [`RegionStrategy::new`] for `info.region_support`.
-    fn decode(&self, data: &[u8], info: &ImageInfo, region: Rect) -> Result<Decoded>;
+    /// [`RegionStrategy::new`] for `info.region_support`. `color` is `info.color`, or
+    /// [`ColorType::L`] when [`Codec::decodes_luma`] allows it.
+    fn decode(
+        &self,
+        data: &[u8],
+        info: &ImageInfo,
+        region: Rect,
+        color: ColorType,
+    ) -> Result<Decoded>;
+
+    /// Whether this image can be decoded straight to luma, skipping colour reconstruction.
+    fn decodes_luma(&self, _info: &ImageInfo) -> bool {
+        false
+    }
+}
+
+/// Whether the decoder for `info` can produce luma directly; see [`Codec::decodes_luma`].
+pub(crate) fn decodes_luma(info: &ImageInfo) -> bool {
+    codec_for(info.format).is_ok_and(|codec| codec.decodes_luma(info))
 }
 
 /// Returns the codec for `format`, or an error if this build cannot decode it.

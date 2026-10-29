@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{PoisonError, RwLock};
 
 use baryon_image::{
-    Error, Executor, Image, JxlOptions, JxlQuality, LazyImage, PixelBuffer, PngCompression, Rect,
-    ResizeFilter, Rotation,
+    ColorType, Error, Executor, Image, JxlOptions, JxlQuality, LazyImage, PixelBuffer,
+    PngCompression, Rect, ResizeFilter, Rotation,
 };
 use numpy::IntoPyArray;
 use numpy::ndarray::{Array3, ShapeError};
@@ -674,6 +674,31 @@ impl PyImage {
             .resize(width, height, filter)
             .map(Self::from)
             .map_err(to_py_err)
+    }
+
+    /// Returns a new image with another channel layout.
+    ///
+    /// ``mode`` is ``"L"``, ``"LA"``, ``"RGB"`` or ``"RGBA"``. Colour becomes gray with the
+    /// ITU-R BT.601 luma weights (0.299, 0.587, 0.114), as in Pillow, and gray becomes colour by
+    /// copying it into every channel. Alpha is dropped without blending, and added as fully
+    /// opaque.
+    ///
+    /// Conversions are planned like every other operation: one that reduces the channels
+    /// runs before rotations and flips, and a colour JPEG converted to gray is decoded from
+    /// its luma plane alone, skipping all colour reconstruction.
+    ///
+    /// Raises:
+    ///     ValueError: ``mode`` is not one of the names above.
+    fn convert(&self, mode: &str) -> PyResult<Self> {
+        let color = ColorType::ALL
+            .into_iter()
+            .find(|color| color.name() == mode)
+            .ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "unknown mode {mode:?}; expected \"L\", \"LA\", \"RGB\" or \"RGBA\""
+                ))
+            })?;
+        Ok(self.inner.convert(color).into())
     }
 
     /// Returns a new image rotated by a multiple of 90 degrees, **clockwise** by default.
