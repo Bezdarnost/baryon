@@ -9,8 +9,14 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
+[features]
+default = ["jxl-encode"]
+# JPEG XL encoding through the vendored libjxl; needs CMake and a C++17 compiler to build.
+jxl-encode = ["dep:baryon-libjxl"]
+
 [dependencies]
 baryon-core.workspace = true
+baryon-libjxl = { workspace = true, optional = true }
 bytemuck.workspace = true
 fast_image_resize.workspace = true
 jxl.workspace = true

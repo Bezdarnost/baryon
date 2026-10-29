@@ -42,6 +42,7 @@ jobs:
           - { name: windows-arm64, runner: windows-11-arm, target: aarch64, test: true, pythons: "3.11\n3.12\n3.13\n3.14" }
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/fetch-libjxl
       - uses: actions/setup-python@v7
         if: ${{ !matrix.manylinux }}
         with:
@@ -52,6 +53,8 @@ jobs:
           manylinux: ${{ matrix.manylinux }}
           args: --release --out dist --find-interpreter
           sccache: false
+          # The manylinux/musllinux containers need CMake to build libjxl.
+          before-script-linux: python3 -m pip install --upgrade cmake
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.name }}
@@ -73,6 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/fetch-libjxl
       - uses: PyO3/maturin-action@v1
         with:
           command: sdist

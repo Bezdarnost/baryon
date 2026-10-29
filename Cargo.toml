@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/baryon-core", "crates/baryon-image", "crates/baryon-python"]
+members = ["crates/baryon-core", "crates/baryon-image", "crates/baryon-libjxl", "crates/baryon-python"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,6 +13,7 @@ authors = ["Aman Urumbekov <amanurumbekov@gmail.com>"]
 [workspace.dependencies]
 baryon-core = { path = "crates/baryon-core", version = "0.1.0" }
 baryon-image = { path = "crates/baryon-image", version = "0.1.0" }
+baryon-libjxl = { path = "crates/baryon-libjxl", version = "0.1.0" }
 bytemuck = "1.23"
 fast_image_resize = { version = "6.1", features = ["rayon"] }
 jxl = "0.8"

@@ -1,0 +1,3 @@
+[submodule "crates/baryon-jxl-sys/libjxl"]
+	path = crates/baryon-libjxl/libjxl
+	url = https://github.com/libjxl/libjxl.git

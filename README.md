@@ -74,7 +74,7 @@ batch = baryon.to_numpy_all([im.crop(0, 0, 512, 512) for im in images])  # decod
 
 | Format  | Decode | Partial decode today                              | Planned                                                     |
 |---------|:------:|---------------------------------------------------|-------------------------------------------------------------|
-| JPEG XL | ✅     | tile decoding: only groups overlapping the region | progressive previews, lossless JPEG transcoding, region decode for rotated files |
+| JPEG XL | ✅ + write | tile decoding: only groups overlapping the region | progressive previews, region decode for rotated files |
 | PNG     | ✅     | row streaming: stops after the last needed row    | —                                                           |
 | JPEG    | ✅     | full decode, then trim                            | MCU skipping, DCT-domain downscale (1/2–1/8)                |
 | AVIF    | 🔜     | —                                                 | grid/tile-aware decode                                      |
@@ -109,9 +109,13 @@ the decoder, batched across cores, returned as NumPy arrays. See the
 
 ## Development
 
-Requires a Rust toolchain (stable, MSRV 1.89) and [uv](https://docs.astral.sh/uv/).
+Requires a Rust toolchain (stable, MSRV 1.89), [uv](https://docs.astral.sh/uv/), CMake and a
+C++17 compiler (JPEG XL encoding builds the vendored libjxl).
 
 ```bash
+git submodule update --init --depth 1 crates/baryon-libjxl/libjxl
+git -C crates/baryon-libjxl/libjxl submodule update --init --depth 1 \
+    third_party/highway third_party/brotli third_party/skcms
 uv sync                      # builds the extension in development mode
 uv run pytest                # Python tests
 cargo test --workspace       # Rust tests
@@ -131,6 +135,7 @@ uv run mypy
 ```
 crates/baryon-core     media-agnostic runtime: errors, format detection, thread-pool executor
 crates/baryon-image    images: codecs, lazy plans, optimizer, operations, batches
+crates/baryon-libjxl   JPEG XL encoding via the vendored libjxl (the only crate with unsafe code)
 crates/baryon-python   PyO3 bindings (the baryon._baryon extension module)
 python/baryon          Python package: public API and type stubs
 tests/python           Python test suite

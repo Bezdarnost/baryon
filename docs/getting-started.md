@@ -10,13 +10,9 @@ baryon needs Python 3.10 or newer and NumPy. Wheels include everything; there ar
 libraries to install.
 
 !!! note "Before the first release"
-    Until baryon is published on PyPI, build it from a checkout with a Rust toolchain
-    (1.89 or newer) and [uv](https://docs.astral.sh/uv/):
-
-    ```bash
-    git clone https://github.com/Bezdarnost/baryon && cd baryon
-    uv sync
-    ```
+    Until baryon is published on PyPI, build it from a checkout; see
+    [Contributing](contributing.md#setup) for the toolchain (Rust, CMake, a C++ compiler) and
+    the two submodule commands.
 
 ## Open an image
 

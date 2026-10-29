@@ -2,10 +2,14 @@
 
 ## Setup
 
-You need a Rust toolchain (stable; 1.89 or newer) and [uv](https://docs.astral.sh/uv/).
+You need a Rust toolchain (stable; 1.89 or newer), [uv](https://docs.astral.sh/uv/), CMake
+(3.16 or newer) and a C++17 compiler: JPEG XL encoding builds the vendored libjxl.
 
 ```bash
 git clone https://github.com/Bezdarnost/baryon && cd baryon
+git submodule update --init --depth 1 crates/baryon-libjxl/libjxl
+git -C crates/baryon-libjxl/libjxl submodule update --init --depth 1 \
+    third_party/highway third_party/brotli third_party/skcms
 uv sync            # builds the extension in development mode
 uv run pytest      # Python tests
 cargo test -p baryon-core -p baryon-image
@@ -28,6 +32,7 @@ uv run mypy
 |---|---|
 | `crates/baryon-core` | media-agnostic runtime: errors, format detection, thread-pool executor |
 | `crates/baryon-image` | images: codecs, lazy plans, optimizer, operations, batches |
+| `crates/baryon-libjxl` | JPEG XL encoding: the vendored libjxl submodule, its build, a small C shim and safe bindings |
 | `crates/baryon-python` | PyO3 bindings, the `baryon._baryon` extension module |
 | `python/baryon` | Python package and the `_baryon.pyi` type stub |
 | `tests/python` | Python tests |
@@ -36,7 +41,11 @@ uv run mypy
 
 ## Conventions
 
-- `unsafe` code is forbidden in the Rust crates.
+- `unsafe` code is forbidden in the Rust crates, except `baryon-libjxl`, which wraps libjxl's
+  C API. There, every `unsafe` block must state why it is sound (enforced by clippy), and
+  libjxl is reached through a C shim with flat functions, so no C struct layouts are mirrored
+  in Rust.
+- libjxl is pinned to a release tag; update it by checking out a newer tag in the submodule.
 - Every public Python function and method is documented twice: in the Rust source (the
   runtime docstring) and in `_baryon.pyi` (for IDEs, type checkers and this site). A test
   fails if they differ.

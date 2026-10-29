@@ -23,6 +23,10 @@
     options:
       heading_level: 3
 
+::: baryon.to_jxl_all
+    options:
+      heading_level: 3
+
 ::: baryon.set_num_threads
     options:
       heading_level: 3
@@ -31,6 +35,14 @@
     options:
       heading_level: 3
 
+## JPEG XL conversion
+
+::: baryon.jxl_to_jpeg
+    options:
+      heading_level: 3
+
+See also [`Image.to_jxl`][baryon.Image.to_jxl] and [`to_jxl_all`][baryon.to_jxl_all].
+
 ## Errors
 
 ::: baryon.BaryonError
@@ -38,6 +50,10 @@
       heading_level: 3
 
 ::: baryon.DecodeError
+    options:
+      heading_level: 3
+
+::: baryon.EncodeError
     options:
       heading_level: 3
 

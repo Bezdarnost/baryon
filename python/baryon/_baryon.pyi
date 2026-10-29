@@ -22,6 +22,9 @@ class BaryonError(Exception):
 class DecodeError(BaryonError):
     """The image data is corrupt or could not be decoded."""
 
+class EncodeError(BaryonError):
+    """The image could not be encoded with the requested settings."""
+
 class UnsupportedFormatError(BaryonError):
     """The image format is not recognized or not supported by this build."""
 
@@ -67,6 +70,36 @@ def to_numpy_all(images: Sequence[Image]) -> list[Pixels]:
 
     Returns:
         One ``(height, width, channels)`` array per image, in input order.
+    """
+
+def to_jxl_all(
+    images: Sequence[Image],
+    *,
+    lossless: bool = True,
+    distance: float = 1.0,
+    effort: int = 7,
+    transcode_jpeg: bool = True,
+) -> list[bytes]:
+    """Encodes many images as JPEG XL in parallel; see :meth:`Image.to_jxl` for the options.
+
+    If any image fails, the first failure is raised as the same exception
+    :meth:`Image.to_jxl` would raise, with its position prefixed to the message, e.g.
+    ``images[3]: ...``.
+
+    Returns:
+        One encoded file per image, in input order.
+    """
+
+def jxl_to_jpeg(source: Source) -> bytes:
+    """Restores the original JPEG file from a JPEG XL file made by lossless JPEG transcoding.
+
+    Args:
+        source: A file path or the JPEG XL file as a bytes-like object.
+
+    Raises:
+        DecodeError: The file holds no JPEG reconstruction data, e.g. because it was encoded
+            from pixels.
+        UnsupportedFormatError: The data is not JPEG XL.
     """
 
 def set_num_threads(num_threads: int | None = None) -> None:
@@ -182,6 +215,34 @@ class Image:
 
         Raises:
             DecodeError: The image data is corrupt.
+        """
+    def to_jxl(
+        self,
+        *,
+        lossless: bool = True,
+        distance: float = 1.0,
+        effort: int = 7,
+        transcode_jpeg: bool = True,
+    ) -> bytes:
+        """Encodes the image, with its pending transformations, as a JPEG XL file.
+
+        An untransformed JPEG is transcoded losslessly by default: the result is typically 20%
+        smaller and the original file can be restored bit for bit with :func:`jxl_to_jpeg`.
+        Everything else is encoded from its pixels.
+
+        Args:
+            lossless: Encode without any loss (default). When ``False``, ``distance`` sets
+                the quality.
+            distance: Butteraugli distance for lossy encoding, 0.0 to 25.0; 1.0 (default) is
+                visually lossless, higher is smaller.
+            effort: Encoder effort, 1 (fastest) to 10 (smallest); 7 is libjxl's default.
+            transcode_jpeg: Transcode untransformed JPEGs instead of encoding their pixels
+                (default). Encoding a JPEG's pixels losslessly produces much larger files.
+
+        Raises:
+            EncodeError: The encoder failed, or the JPEG cannot be transcoded losslessly (pass
+                ``transcode_jpeg=False`` to encode its pixels instead).
+            ValueError: ``distance`` or ``effort`` is out of range.
         """
     def __array__(
         self, dtype: npt.DTypeLike | None = None, copy: bool | None = None

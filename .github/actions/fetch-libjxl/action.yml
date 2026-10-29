@@ -1,0 +1,12 @@
+name: Fetch vendored libjxl
+description: >
+  Checks out the libjxl submodule and only the third-party sources the library build needs
+  (highway, brotli, skcms), skipping libjxl's test data and tool dependencies.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        git submodule update --init --depth 1 crates/baryon-libjxl/libjxl
+        git -C crates/baryon-libjxl/libjxl submodule update --init --depth 1 \
+          third_party/highway third_party/brotli third_party/skcms

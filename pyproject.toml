@@ -57,6 +57,7 @@ cache-keys = [
     { file = "Cargo.toml" },
     { file = "Cargo.lock" },
     { file = "crates/**/*.rs" },
+    { file = "crates/**/*.c" },
     { file = "crates/**/Cargo.toml" },
 ]
 
@@ -69,6 +70,7 @@ filterwarnings = ["error"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+extend-exclude = ["crates/baryon-libjxl/libjxl"]  # vendored libjxl sources
 
 [tool.ruff.lint]
 select = ["ALL"]

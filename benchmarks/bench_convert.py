@@ -33,11 +33,22 @@ import common
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-CONVERTERS = ("imagecodecs", "pillow-jxl")
+CONVERTERS = ("baryon", "imagecodecs", "pillow-jxl")
 
 
 def converter(lib: str, effort: int) -> Callable[[Path], bytes]:
     """Return a function converting one file to JPEG XL with a single encoder thread."""
+    if lib == "baryon":
+        import baryon  # noqa: PLC0415
+
+        baryon.set_num_threads(1)
+
+        def convert(path: Path) -> bytes:
+            # JPEGs are transcoded losslessly, everything else is encoded from lossless pixels.
+            return baryon.open(path).to_jxl(effort=effort)
+
+        return convert
+
     if lib == "imagecodecs":
         import imagecodecs  # noqa: PLC0415
 

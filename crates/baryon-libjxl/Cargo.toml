@@ -1,0 +1,69 @@
+[package]
+name = "baryon-libjxl"
+description = "JPEG XL encoding for baryon through the vendored libjxl reference encoder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+links = "jxl"
+# Only what the build needs; libjxl's tests, docs and tools stay out of the package.
+include = [
+    "/build.rs",
+    "/src",
+    "/shim",
+    "/libjxl/CMakeLists.txt",
+    "/libjxl/LICENSE",
+    "/libjxl/PATENTS",
+    "/libjxl/cmake",
+    "/libjxl/cmake_uninstall.cmake.in",
+    "/libjxl/lib",
+    # Configured unconditionally by libjxl's CMakeLists, even with tools disabled.
+    "/libjxl/tools",
+    "/libjxl/third_party/CMakeLists.txt",
+    "/libjxl/third_party/*.cmake",
+    "/libjxl/third_party/brotli/CMakeLists.txt",
+    "/libjxl/third_party/brotli/LICENSE",
+    "/libjxl/third_party/brotli/c",
+    "/libjxl/third_party/brotli/docs",
+    "/libjxl/third_party/brotli/scripts",
+    "/libjxl/third_party/highway/CMakeLists.txt",
+    "/libjxl/third_party/highway/CMakeLists.txt.in",
+    "/libjxl/third_party/highway/LICENSE",
+    "/libjxl/third_party/highway/LICENSE-BSD3",
+    "/libjxl/third_party/highway/cmake",
+    "/libjxl/third_party/highway/hwy",
+    "/libjxl/third_party/highway/*.pc.in",
+    "/libjxl/third_party/skcms/LICENSE",
+    "/libjxl/third_party/skcms/skcms.cc",
+    "/libjxl/third_party/skcms/skcms.h",
+    "/libjxl/third_party/skcms/src",
+]
+
+[dependencies]
+rayon.workspace = true
+
+[dev-dependencies]
+jpeg-encoder.workspace = true
+
+[build-dependencies]
+cc = "1.2"
+cmake = "0.1"
+
+# The workspace forbids unsafe code; this crate is the one exception, and every unsafe block
+# must explain why it is sound.
+[lints.rust]
+missing_docs = "warn"
+unreachable_pub = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"

@@ -35,6 +35,16 @@ pub enum Error {
         source: BoxError,
     },
 
+    /// The encoder rejected the data or the settings.
+    #[error("failed to encode {format}: {source}")]
+    Encode {
+        /// The format being written.
+        format: Format,
+        /// The encoder error.
+        #[source]
+        source: BoxError,
+    },
+
     /// An operation was requested with arguments that do not fit the input.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
@@ -52,6 +62,14 @@ impl Error {
     /// Builds [`Error::Decode`] from any error-like value, including strings.
     pub fn decode(format: Format, source: impl Into<BoxError>) -> Self {
         Self::Decode {
+            format,
+            source: source.into(),
+        }
+    }
+
+    /// Builds [`Error::Encode`] from any error-like value, including strings.
+    pub fn encode(format: Format, source: impl Into<BoxError>) -> Self {
+        Self::Encode {
             format,
             source: source.into(),
         }

@@ -24,4 +24,13 @@ yet.
 
 ## Writing images
 
-Encoding, starting with lossless JPEG XL conversion, is on the [roadmap](roadmap.md).
+baryon writes JPEG XL with the reference encoder, libjxl, built into the wheel:
+
+```python
+jxl = baryon.open("photo.jpg").to_jxl()  # lossless JPEG transcoding, ~20% smaller
+jpeg = baryon.jxl_to_jpeg(jxl)  # the original JPEG, bit for bit
+jxl = baryon.open("scan.png").to_jxl(effort=7)  # lossless pixels
+jxl = image.crop(0, 0, 512, 512).to_jxl(lossless=False, distance=1.0)  # lossy
+```
+
+See the [JPEG XL guide](guide/jpeg-xl.md) for when to use which.

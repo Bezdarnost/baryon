@@ -10,12 +10,16 @@
 use std::path::PathBuf;
 use std::sync::{PoisonError, RwLock};
 
-use baryon_image::{Error, Executor, Image, LazyImage, PixelBuffer, Rect, ResizeFilter, Rotation};
+use baryon_image::{
+    Error, Executor, Image, JxlOptions, JxlQuality, LazyImage, PixelBuffer, Rect, ResizeFilter,
+    Rotation,
+};
 use numpy::IntoPyArray;
 use numpy::ndarray::{Array3, ShapeError};
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use pyo3::{create_exception, intern};
 use rayon::prelude::*;
 
@@ -33,6 +37,12 @@ create_exception!(
 );
 create_exception!(
     baryon,
+    EncodeError,
+    BaryonError,
+    "The image could not be encoded with the requested settings."
+);
+create_exception!(
+    baryon,
     UnsupportedFormatError,
     BaryonError,
     "The image format is not recognized or not supported by this build."
@@ -44,6 +54,7 @@ fn to_py_err(err: Error) -> PyErr {
             UnsupportedFormatError::new_err(err.to_string())
         }
         Error::Decode { .. } => DecodeError::new_err(err.to_string()),
+        Error::Encode { .. } => EncodeError::new_err(err.to_string()),
         Error::InvalidArgument(message) => PyValueError::new_err(message),
         Error::Io(io) => io.into(),
         _ => BaryonError::new_err(err.to_string()),
@@ -58,6 +69,19 @@ fn to_py_err_at(py: Python<'_>, what: &str, index: usize, err: Error) -> PyErr {
     match err.get_type(py).call1((message,)) {
         Ok(value) => PyErr::from_value(value),
         Err(failed) => failed,
+    }
+}
+
+/// Builds encoder options from the keyword arguments shared by ``to_jxl`` and ``to_jxl_all``.
+fn jxl_options(lossless: bool, distance: f32, effort: u8, transcode_jpeg: bool) -> JxlOptions {
+    JxlOptions {
+        quality: if lossless {
+            JxlQuality::Lossless
+        } else {
+            JxlQuality::Distance(distance)
+        },
+        effort,
+        transcode_jpeg,
     }
 }
 
@@ -210,6 +234,69 @@ fn open_all(py: Python<'_>, sources: Vec<Input>) -> PyResult<Vec<PyImage>> {
                 .map_err(|err| to_py_err_at(py, "sources", index, err))
         })
         .collect()
+}
+
+/// Encodes many images as JPEG XL in parallel; see :meth:`Image.to_jxl` for the options.
+///
+/// If any image fails, the first failure is raised as the same exception
+/// :meth:`Image.to_jxl` would raise, with its position prefixed to the message, e.g.
+/// ``images[3]: ...``.
+///
+/// Returns:
+///     One encoded file per image, in input order.
+#[pyfunction]
+#[pyo3(signature = (images, *, lossless = true, distance = 1.0, effort = 7, transcode_jpeg = true))]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "PyO3 extracts sequence arguments into an owned Vec"
+)]
+fn to_jxl_all<'py>(
+    py: Python<'py>,
+    images: Vec<Bound<'py, PyImage>>,
+    lossless: bool,
+    distance: f32,
+    effort: u8,
+    transcode_jpeg: bool,
+) -> PyResult<Vec<Bound<'py, PyBytes>>> {
+    let executor = executor()?;
+    let options = jxl_options(lossless, distance, effort, transcode_jpeg);
+    let pipelines: Vec<LazyImage> = images
+        .iter()
+        .map(|image| image.get().inner.clone())
+        .collect();
+    let encoded = py.detach(|| executor.map(&pipelines, |image| image.to_jxl(&options)));
+    encoded
+        .into_iter()
+        .enumerate()
+        .map(|(index, result)| {
+            result
+                .map(|data| PyBytes::new(py, &data))
+                .map_err(|err| to_py_err_at(py, "images", index, err))
+        })
+        .collect()
+}
+
+/// Restores the original JPEG file from a JPEG XL file made by lossless JPEG transcoding.
+///
+/// Args:
+///     source: A file path or the JPEG XL file as a bytes-like object.
+///
+/// Raises:
+///     DecodeError: The file holds no JPEG reconstruction data, e.g. because it was encoded
+///         from pixels.
+///     UnsupportedFormatError: The data is not JPEG XL.
+#[pyfunction]
+fn jxl_to_jpeg(py: Python<'_>, source: Input) -> PyResult<Bound<'_, PyBytes>> {
+    let jpeg = py
+        .detach(|| {
+            let data = match source {
+                Input::Data(data) => data,
+                Input::Path(path) => std::fs::read(path)?,
+            };
+            baryon_image::jxl_to_jpeg(&data)
+        })
+        .map_err(to_py_err)?;
+    Ok(PyBytes::new(py, &jpeg))
 }
 
 /// Decodes many images in parallel and returns their pixels.
@@ -421,6 +508,42 @@ impl PyImage {
         into_ndarray(py, image)
     }
 
+    /// Encodes the image, with its pending transformations, as a JPEG XL file.
+    ///
+    /// An untransformed JPEG is transcoded losslessly by default: the result is typically 20%
+    /// smaller and the original file can be restored bit for bit with :func:`jxl_to_jpeg`.
+    /// Everything else is encoded from its pixels.
+    ///
+    /// Args:
+    ///     lossless: Encode without any loss (default). When ``False``, ``distance`` sets
+    ///         the quality.
+    ///     distance: Butteraugli distance for lossy encoding, 0.0 to 25.0; 1.0 (default) is
+    ///         visually lossless, higher is smaller.
+    ///     effort: Encoder effort, 1 (fastest) to 10 (smallest); 7 is libjxl's default.
+    ///     transcode_jpeg: Transcode untransformed JPEGs instead of encoding their pixels
+    ///         (default). Encoding a JPEG's pixels losslessly produces much larger files.
+    ///
+    /// Raises:
+    ///     EncodeError: The encoder failed, or the JPEG cannot be transcoded losslessly (pass
+    ///         ``transcode_jpeg=False`` to encode its pixels instead).
+    ///     ValueError: ``distance`` or ``effort`` is out of range.
+    #[pyo3(signature = (*, lossless = true, distance = 1.0, effort = 7, transcode_jpeg = true))]
+    fn to_jxl<'py>(
+        &self,
+        py: Python<'py>,
+        lossless: bool,
+        distance: f32,
+        effort: u8,
+        transcode_jpeg: bool,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let executor = executor()?;
+        let options = jxl_options(lossless, distance, effort, transcode_jpeg);
+        let data = py
+            .detach(|| executor.install(|| self.inner.to_jxl(&options)))
+            .map_err(to_py_err)?;
+        Ok(PyBytes::new(py, &data))
+    }
+
     /// NumPy array protocol: ``numpy.asarray(image)`` decodes like :meth:`to_numpy`.
     #[pyo3(signature = (dtype = None, copy = None))]
     fn __array__<'py>(
@@ -496,10 +619,13 @@ fn _baryon(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(open, m)?)?;
     m.add_function(wrap_pyfunction!(open_all, m)?)?;
     m.add_function(wrap_pyfunction!(to_numpy_all, m)?)?;
+    m.add_function(wrap_pyfunction!(to_jxl_all, m)?)?;
+    m.add_function(wrap_pyfunction!(jxl_to_jpeg, m)?)?;
     m.add_function(wrap_pyfunction!(set_num_threads, m)?)?;
     m.add_function(wrap_pyfunction!(get_num_threads, m)?)?;
     m.add("BaryonError", py.get_type::<BaryonError>())?;
     m.add("DecodeError", py.get_type::<DecodeError>())?;
+    m.add("EncodeError", py.get_type::<EncodeError>())?;
     m.add(
         "UnsupportedFormatError",
         py.get_type::<UnsupportedFormatError>(),
