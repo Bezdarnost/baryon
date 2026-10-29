@@ -8,20 +8,58 @@ use baryon_image::{
 /// A 16-bit grey+alpha PNG whose pixel `(x, y)` stores `[x, y]`, so every output pixel says
 /// exactly which source pixel it came from.
 fn coordinate_png(width: u32, height: u32) -> Vec<u8> {
+    oriented_coordinate_png(width, height, None)
+}
+
+/// [`coordinate_png`] with an `eXIf` chunk holding the given EXIF orientation.
+fn oriented_coordinate_png(width: u32, height: u32, exif_orientation: Option<u16>) -> Vec<u8> {
     let samples: Vec<u8> = (0..height)
         .flat_map(|y| (0..width).flat_map(move |x| [x, y]))
         .flat_map(|v| u16::try_from(v).unwrap().to_be_bytes())
         .collect();
+    let mut info = png::Info::with_size(width, height);
+    info.color_type = png::ColorType::GrayscaleAlpha;
+    info.bit_depth = png::BitDepth::Sixteen;
+    info.exif_metadata = exif_orientation.map(|value| exif_block(value).into());
     let mut out = Vec::new();
-    let mut encoder = png::Encoder::new(&mut out, width, height);
-    encoder.set_color(png::ColorType::GrayscaleAlpha);
-    encoder.set_depth(png::BitDepth::Sixteen);
-    encoder
+    png::Encoder::with_info(&mut out, info)
+        .unwrap()
         .write_header()
         .unwrap()
         .write_image_data(&samples)
         .unwrap();
     out
+}
+
+/// A little-endian EXIF (TIFF) block whose IFD0 holds only the orientation tag.
+fn exif_block(orientation: u16) -> Vec<u8> {
+    let mut out = b"II".to_vec();
+    out.extend(42_u16.to_le_bytes());
+    out.extend(8_u32.to_le_bytes());
+    out.extend(1_u16.to_le_bytes());
+    out.extend(0x0112_u16.to_le_bytes());
+    out.extend(3_u16.to_le_bytes());
+    out.extend(1_u32.to_le_bytes());
+    out.extend([orientation.to_le_bytes(), [0, 0]].concat());
+    out.extend(0_u32.to_le_bytes());
+    out
+}
+
+/// The ops that turn a stored image into the displayed one for an EXIF orientation value,
+/// spelled out from the EXIF specification.
+fn exif_ops(orientation: u16) -> Vec<Op> {
+    use Rotation::{Cw90, Cw180, Cw270};
+    match orientation {
+        1 => vec![],
+        2 => vec![Op::FlipHorizontal],
+        3 => vec![Op::Rotate(Cw180)],
+        4 => vec![Op::FlipVertical],
+        5 => vec![Op::FlipHorizontal, Op::Rotate(Cw270)],
+        6 => vec![Op::Rotate(Cw90)],
+        7 => vec![Op::FlipHorizontal, Op::Rotate(Cw90)],
+        8 => vec![Op::Rotate(Cw270)],
+        _ => unreachable!("EXIF orientations are 1 to 8"),
+    }
 }
 
 /// Deliberately simple reference implementations, independent of the optimizer's group algebra.
@@ -97,20 +135,24 @@ fn random_op(rng: &mut XorShift, image: &LazyImage, allow_resize: bool) -> LazyI
     }
 }
 
-fn check_random_pipelines(allow_resize: bool, seed: u64) {
-    let source = LazyImage::from_bytes(coordinate_png(23, 17)).unwrap();
-    let full = source.execute().unwrap();
+fn check_random_pipelines(allow_resize: bool, seed: u64, exif_orientation: u16) {
+    let source =
+        LazyImage::from_bytes(oriented_coordinate_png(23, 17, Some(exif_orientation))).unwrap();
+    let stored = LazyImage::from_bytes(coordinate_png(23, 17))
+        .unwrap()
+        .execute()
+        .unwrap();
     let mut rng = XorShift(seed);
 
-    for case in 0..500 {
+    for case in 0..200 {
         let mut image = source.clone();
         for _ in 0..rng.range(0, 8) {
             image = random_op(&mut rng, &image, allow_resize);
         }
-        let expected = image
-            .ops()
+        let expected = exif_ops(exif_orientation)
             .iter()
-            .fold(full.clone(), |img, &op| naive(&img, op));
+            .chain(image.ops())
+            .fold(stored.clone(), |img, &op| naive(&img, op));
         let actual = image.execute().unwrap();
         assert_eq!(
             (actual.width(), actual.height()),
@@ -129,7 +171,9 @@ fn check_random_pipelines(allow_resize: bool, seed: u64) {
 
 #[test]
 fn geometric_pipelines_match_naive_execution() {
-    check_random_pipelines(false, 0x5EED_0001);
+    for orientation in 1..=8 {
+        check_random_pipelines(false, 0x5EED_0001, orientation);
+    }
 }
 
 /// Large enough that crops and orientations are split across threads.
@@ -166,7 +210,27 @@ fn parallel_geometry_matches_naive_execution() {
 
 #[test]
 fn pipelines_with_resize_match_naive_execution() {
-    check_random_pipelines(true, 0x5EED_0002);
+    for orientation in 1..=8 {
+        check_random_pipelines(true, 0x5EED_0002, orientation);
+    }
+}
+
+#[test]
+fn exif_orientation_is_applied_and_reported() {
+    let image = LazyImage::from_bytes(oriented_coordinate_png(64, 48, Some(6))).unwrap();
+    assert_eq!((image.width(), image.height()), (48, 64));
+    assert!(image.explain(false).contains("from EXIF"));
+    // Cropping the top-left of the displayed image reads the bottom-left of the stored one,
+    // and the decoder is asked for just that region.
+    let corner = image.crop(Rect::new(0, 0, 10, 5)).unwrap();
+    assert_eq!(corner.plan().region(), Rect::new(0, 38, 5, 10));
+    assert_eq!(
+        LazyImage::from_bytes(oriented_coordinate_png(8, 8, Some(1)))
+            .unwrap()
+            .plan()
+            .steps(),
+        []
+    );
 }
 
 #[test]

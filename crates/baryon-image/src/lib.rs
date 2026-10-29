@@ -19,6 +19,7 @@ mod batch;
 mod codecs;
 #[cfg(feature = "jxl-encode")]
 mod encode;
+mod exif;
 mod geometry;
 mod image;
 pub mod ops;

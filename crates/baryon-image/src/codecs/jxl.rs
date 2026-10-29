@@ -14,7 +14,7 @@ use jxl_oxide::image::BitDepth;
 use jxl_oxide::{CropInfo, JxlImage, PixelFormat};
 
 use super::{Codec, Decoded, ImageInfo, RegionSupport, jxl_full};
-use crate::geometry::Rect;
+use crate::geometry::{Orientation, Rect};
 use crate::image::{ColorType, Image, PixelBuffer, SampleType};
 use baryon_core::{BoxError, Error, Format, Result};
 
@@ -62,6 +62,7 @@ impl Codec for JxlCodec {
             format: Format::JpegXl,
             width: image.width(),
             height: image.height(),
+            orientation: Orientation::IDENTITY,
             color,
             sample_type,
             progressive: false,

@@ -13,7 +13,7 @@ mod png;
 
 use std::fmt;
 
-use crate::geometry::Rect;
+use crate::geometry::{Orientation, Rect};
 use crate::image::{ColorType, Image, SampleType};
 use baryon_core::Format;
 use baryon_core::{Error, Result};
@@ -23,10 +23,14 @@ use baryon_core::{Error, Result};
 pub struct ImageInfo {
     /// Container format.
     pub format: Format,
-    /// Width in pixels.
+    /// Width of the decoded pixels, before `orientation` is applied.
     pub width: u32,
-    /// Height in pixels.
+    /// Height of the decoded pixels, before `orientation` is applied.
     pub height: u32,
+    /// Transform from the decoded pixels to the displayed image, from EXIF metadata. Applied
+    /// by the planner, so that regions can still be requested in stored coordinates. JPEG XL
+    /// decoders apply their orientation themselves and report the identity here.
+    pub orientation: Orientation,
     /// Channel layout the decoder will produce.
     pub color: ColorType,
     /// Sample type the decoder will produce.
@@ -38,9 +42,14 @@ pub struct ImageInfo {
 }
 
 impl ImageInfo {
-    /// The full image area.
+    /// The full area of the decoded pixels.
     pub const fn bounds(&self) -> Rect {
         Rect::from_size(self.width, self.height)
+    }
+
+    /// `(width, height)` as displayed, after `orientation`.
+    pub const fn display_size(&self) -> (u32, u32) {
+        self.orientation.output_size(self.width, self.height)
     }
 }
 

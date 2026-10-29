@@ -79,7 +79,7 @@ pub struct LazyImage {
 impl LazyImage {
     /// Starts an empty pipeline over `source`.
     pub fn new(source: Arc<Source>) -> Self {
-        let ImageInfo { width, height, .. } = *source.info();
+        let (width, height) = source.info().display_size();
         Self {
             source,
             ops: Vec::new(),
@@ -217,6 +217,9 @@ impl LazyImage {
             "source {} {}x{} {} {}\n",
             info.format, info.width, info.height, info.color, info.sample_type
         );
+        if !info.orientation.is_identity() {
+            let _ = writeln!(out, "orient {} (from EXIF)", info.orientation);
+        }
         for op in &self.ops {
             // Writing to a String cannot fail.
             let _ = writeln!(out, "{op}");
@@ -273,7 +276,10 @@ pub struct PhysicalPlan {
 
 impl PhysicalPlan {
     fn new(info: &ImageInfo, ops: &[Op]) -> Self {
+        // The stored orientation is the first transform of the first run, so crops after it
+        // still become a decode region in stored coordinates.
         let mut geometry = Geometry::new(info.width, info.height);
+        geometry.orientation = info.orientation;
         let mut region = None;
         let mut steps = Vec::new();
 

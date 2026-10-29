@@ -9,6 +9,7 @@ use std::io::Cursor;
 use png::{BitDepth, Decoder, Limits, Reader, Transformations};
 
 use super::{Codec, Decoded, ImageInfo, RegionSupport};
+use crate::exif;
 use crate::geometry::Rect;
 use crate::image::{ColorType, Image, PixelBuffer, SampleType};
 use baryon_core::Format;
@@ -50,6 +51,11 @@ impl Codec for PngCodec {
             format: Format::Png,
             width: info.width,
             height: info.height,
+            orientation: info
+                .exif_metadata
+                .as_deref()
+                .and_then(exif::orientation)
+                .unwrap_or_default(),
             color,
             sample_type,
             progressive: info.interlaced,

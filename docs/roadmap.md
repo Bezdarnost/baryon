@@ -35,7 +35,8 @@ signal where time ranges and resampling play the role of crops and resizes.
 - [x] full-image JPEG XL decoding as fast as libjxl (jxl-rs)
 - [ ] JPEG: skip blocks outside a crop, decode at 1/2, 1/4 and 1/8 scale
 - [ ] JPEG XL: region decoding for rotated files, progressive previews
-- [ ] EXIF orientation and ICC colour management for JPEG and PNG
+- [x] EXIF orientation for JPEG and PNG
+- [ ] ICC colour management for JPEG and PNG
 
 **Next**
 

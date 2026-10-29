@@ -90,6 +90,29 @@ impl Orientation {
         flip_y: false,
     };
 
+    /// The orientation described by an EXIF or TIFF orientation tag value (1 to 8), as the
+    /// transform from the stored image to the displayed one. Returns `None` for other values.
+    pub const fn from_exif(value: u16) -> Option<Self> {
+        // Each value names the stored pixel shown at the displayed top-left; e.g. 6 means the
+        // stored image must be turned 90 degrees clockwise to be displayed upright.
+        let (transpose, flip_x, flip_y) = match value {
+            1 => (false, false, false),
+            2 => (false, true, false),
+            3 => (false, true, true),
+            4 => (false, false, true),
+            5 => (true, false, false),
+            6 => (true, false, true),
+            7 => (true, true, true),
+            8 => (true, true, false),
+            _ => return None,
+        };
+        Some(Self {
+            transpose,
+            flip_x,
+            flip_y,
+        })
+    }
+
     /// Whether this orientation leaves the image unchanged.
     pub const fn is_identity(self) -> bool {
         !self.transpose && !self.flip_x && !self.flip_y
@@ -344,6 +367,35 @@ mod tests {
                 .then_rotate(r.inverse());
             assert!(o.is_identity(), "{r} then its inverse");
         }
+    }
+
+    #[test]
+    fn exif_orientations_match_their_definitions() {
+        let id = Orientation::IDENTITY;
+        let cases = [
+            (1, id),
+            (2, id.then_flip_horizontal()),
+            (3, id.then_rotate(Rotation::Cw180)),
+            (4, id.then_flip_vertical()),
+            (6, id.then_rotate(Rotation::Cw90)),
+            (8, id.then_rotate(Rotation::Cw270)),
+            // Transpose: mirrored, then turned 90 degrees counter-clockwise.
+            (5, id.then_flip_horizontal().then_rotate(Rotation::Cw270)),
+            // Transverse: mirrored, then turned 90 degrees clockwise.
+            (7, id.then_flip_horizontal().then_rotate(Rotation::Cw90)),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(
+                Orientation::from_exif(value),
+                Some(expected),
+                "EXIF {value}"
+            );
+        }
+        // Transpose maps the displayed top-right corner of a 3x2 source to its bottom-left.
+        let transpose = Orientation::from_exif(5).unwrap();
+        assert_eq!(transpose.source_pixel(1, 0, 3, 2), (0, 1));
+        assert_eq!(Orientation::from_exif(0), None);
+        assert_eq!(Orientation::from_exif(9), None);
     }
 
     #[test]

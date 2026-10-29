@@ -398,7 +398,7 @@ impl PyImage {
         self.inner.info().format.name()
     }
 
-    /// ``(width, height)`` of the encoded source image, before any transformation.
+    /// ``(width, height)`` as stored in the file, before EXIF orientation and transforms.
     #[getter]
     fn source_size(&self) -> (u32, u32) {
         let info = self.inner.info();

@@ -154,7 +154,7 @@ class Image:
         """Source container format, e.g. ``"jpeg"`` or ``"png"``."""
     @property
     def source_size(self) -> tuple[int, int]:
-        """``(width, height)`` of the encoded source image, before any transformation."""
+        """``(width, height)`` as stored in the file, before EXIF orientation and transforms."""
     @property
     def progressive(self) -> bool:
         """Whether the source is stored in several passes (progressive JPEG, interlaced PNG)."""

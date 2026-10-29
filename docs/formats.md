@@ -19,8 +19,14 @@ stored samples unchanged; colour profiles are not applied yet.
 
 ## Orientation
 
-JPEG XL orientation is applied automatically. EXIF orientation in JPEG files is not applied
-yet.
+Images are delivered upright: the orientation in a JPEG XL header, and the EXIF orientation
+tag of JPEG and PNG files, are applied automatically. `width`, `height` and every crop
+coordinate refer to the upright image; `source_size` is the size as stored.
+
+The EXIF rotation costs nothing extra in most pipelines: it joins your own flips and rotations
+in a single pass, and crops are still pushed into the decoder. This also keeps JPEG and JPEG XL
+consistent, because libjxl moves the EXIF orientation into the JPEG XL header when it
+transcodes a JPEG.
 
 ## Writing images
 

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 from PIL import Image as PILImage
+from PIL import ImageOps
 
 import baryon
 from conftest import FIXTURES, gradient
@@ -47,6 +48,26 @@ def test_jpeg_transcoding_is_bit_exact_and_reversible(encode: Encoder, tmp_path:
     # code; like any two JPEG decoders, they agree to within a few levels.
     np.testing.assert_allclose(
         baryon.open(jxl).to_numpy(), baryon.open(original).to_numpy(), atol=4, rtol=0
+    )
+
+
+@pytest.mark.parametrize("orientation", range(1, 9))
+def test_exif_orientation_survives_transcoding(orientation: int) -> None:
+    exif = PILImage.Exif()
+    exif[0x0112] = orientation
+    buf = io.BytesIO()
+    PILImage.fromarray(gradient(96, 64)).save(buf, "JPEG", quality=95, exif=exif)
+    original = buf.getvalue()
+    upright = np.asarray(ImageOps.exif_transpose(PILImage.open(io.BytesIO(original))))
+
+    image = baryon.open(original)
+    assert (image.width, image.height) == (upright.shape[1], upright.shape[0])
+    assert image.source_size == (96, 64)
+    np.testing.assert_allclose(image.to_numpy(), upright, atol=4, rtol=0)
+    # libjxl moves the EXIF orientation into the JPEG XL header when transcoding, so the
+    # JPEG XL file displays the same way.
+    np.testing.assert_allclose(
+        baryon.open(image.to_jxl()).to_numpy(), image.to_numpy(), atol=4, rtol=0
     )
 
 

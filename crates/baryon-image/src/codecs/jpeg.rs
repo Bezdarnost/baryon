@@ -9,6 +9,7 @@ use zune_core::options::DecoderOptions;
 use zune_jpeg::JpegDecoder;
 
 use super::{Codec, Decoded, ImageInfo, RegionSupport};
+use crate::exif;
 use crate::geometry::Rect;
 use crate::image::{ColorType, Image, PixelBuffer, SampleType};
 use baryon_core::Format;
@@ -51,6 +52,10 @@ impl Codec for JpegCodec {
             format: Format::Jpeg,
             width: u32::from(info.width),
             height: u32::from(info.height),
+            orientation: decoder
+                .exif()
+                .and_then(|tiff| exif::orientation(tiff))
+                .unwrap_or_default(),
             color,
             sample_type: SampleType::U8,
             progressive: info.sof.is_progressive(),
@@ -77,6 +82,7 @@ fn jpeg_error(err: zune_jpeg::errors::DecodeErrors) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::Orientation;
 
     fn encode(width: u16, height: u16, color: jpeg_encoder::ColorType, data: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
@@ -92,6 +98,24 @@ mod tests {
         let info = JpegCodec.probe(&data).unwrap();
         assert_eq!((info.width, info.height), (33, 17));
         assert_eq!(info.color, ColorType::Rgb);
+    }
+
+    #[test]
+    fn reads_exif_orientation() {
+        let mut data = Vec::new();
+        let mut encoder = jpeg_encoder::Encoder::new(&mut data, 90);
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.extend(crate::exif::tests::exif_with_orientation(8, true));
+        encoder.add_app_segment(1, app1).unwrap();
+        encoder
+            .encode(&[0; 6 * 4 * 3], 6, 4, jpeg_encoder::ColorType::Rgb)
+            .unwrap();
+        let info = JpegCodec.probe(&data).unwrap();
+        assert_eq!(info.orientation, Orientation::from_exif(8).unwrap());
+        assert_eq!(info.display_size(), (4, 6));
+
+        let plain = encode(6, 4, jpeg_encoder::ColorType::Rgb, &[0; 6 * 4 * 3]);
+        assert!(JpegCodec.probe(&plain).unwrap().orientation.is_identity());
     }
 
     #[test]
