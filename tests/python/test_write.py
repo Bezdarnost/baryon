@@ -129,14 +129,47 @@ def test_save_all_writes_every_file(encode: Encoder, tmp_path: Path) -> None:
 def test_save_all_reports_failures_by_position(encode: Encoder, tmp_path: Path) -> None:
     rgb = baryon.open(encode(gradient(16, 16), "PNG"))
     rgba = baryon.open(encode(gradient(16, 16, 4), "PNG"))
-    paths = [tmp_path / "0.jpg", tmp_path / "1.jpg", tmp_path / "2.jpg"]
+    paths = [tmp_path / f"{i}.jpg" for i in range(14)]
+    images = [rgba if i % 2 else rgb for i in range(14)]
 
-    with pytest.raises(ValueError, match=r"^images\[1\]: .*alpha"):
-        baryon.save_all([rgb, rgba, rgb], paths)
-    assert [p.exists() for p in paths] == [True, False, True]
+    with pytest.raises(ValueError, match=r"^images\[1\]: .*alpha") as raised:
+        baryon.save_all(images, paths)
+    assert [p.exists() for p in paths] == [i % 2 == 0 for i in range(14)]
+    others = ", ".join(f"images[{i}]" for i in (3, 5, 7, 9, 11, 13))
+    assert str(raised.value).endswith(f"(6 more failed: {others})")
+    failures = raised.value.failures  # type: ignore[attr-defined]
+    assert [index for index, _ in failures] == [1, 3, 5, 7, 9, 11, 13]
+    assert all(isinstance(err, ValueError) for _, err in failures)
 
     with pytest.raises(ValueError, match="2 images but 1 paths"):
         baryon.save_all([rgb, rgb], [tmp_path / "x.png"])
     with pytest.raises(ValueError, match="quality applies to JPEG"):
         baryon.save_all([rgb], [tmp_path / "y.png"], quality=80)
+    with pytest.raises(ValueError, match="distance"):
+        baryon.save_all([rgb], [tmp_path / "y.jxl"], jpeg_fallback="lossy", distance=30.0)
     assert not (tmp_path / "y.png").exists()
+    assert not (tmp_path / "y.jxl").exists()
+
+
+def test_save_all_falls_back_and_reports_where(encode: Encoder, tmp_path: Path) -> None:
+    jpeg = encode(gradient(64, 48), "JPEG", quality=90)
+    images = [
+        baryon.open(jpeg),
+        baryon.open(FIXTURES / "untranscodable.jpg"),
+        baryon.open(encode(gradient(32, 32), "PNG")),
+        baryon.open(FIXTURES / "untranscodable.jpg"),
+    ]
+    paths = [tmp_path / f"{i}.jxl" for i in range(4)]
+
+    with pytest.raises(
+        baryon.EncodeError, match=r"^images\[1\]: .*\(1 more failed: images\[3\]\)$"
+    ):
+        baryon.save_all(images, paths)
+    assert [p.exists() for p in paths] == [True, False, True, False]
+
+    assert baryon.save_all(images, paths, jpeg_fallback="lossy") == [1, 3]
+    assert baryon.jxl_to_jpeg(paths[0]) == jpeg
+    for i in (1, 3):
+        decoded = baryon.open(paths[i]).to_numpy().astype(int)
+        assert np.abs(decoded - images[i].to_numpy()).mean() < 3
+    assert baryon.save_all(images[:1], paths[:1]) == []

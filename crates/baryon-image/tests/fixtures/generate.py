@@ -57,6 +57,16 @@ def smooth_rgb8() -> np.ndarray:
     return np.stack([r, g, b], axis=-1).round().astype(np.uint8)
 
 
+def with_invalid_icc(jpeg: bytes) -> bytes:
+    """Insert an APP2 ICC profile segment holding garbage right after the SOI marker.
+
+    Decoders ignore it, but libjxl rejects it, so the JPEG cannot be transcoded losslessly.
+    """
+    payload = b"ICC_PROFILE\0" + bytes([1, 1]) + b"not an ICC profile" * 4
+    segment = b"\xff\xe2" + (len(payload) + 2).to_bytes(2, "big") + payload
+    return jpeg[:2] + segment + jpeg[2:]
+
+
 def write_jxl(name: str, array: np.ndarray, **options: object) -> None:
     """Encode ``array`` with libjxl and write it next to this script."""
     (HERE / name).write_bytes(imagecodecs.jpegxl_encode(array, **options))
@@ -72,6 +82,9 @@ def main() -> None:
     write_jxl("gradient-rgba16-lossless.jxl", gradient_rgba16(), lossless=True)
     write_jxl("gradient-gray8-lossless.jxl", gradient_gray8(), lossless=True)
     write_jxl("smooth-rgb8-lossy.jxl", smooth_rgb8(), distance=1.0, effort=7, usecontainer=True)
+    (HERE / "untranscodable.jpg").write_bytes(
+        with_invalid_icc(imagecodecs.jpeg8_encode(gradient_rgb8(), level=90))
+    )
 
 
 if __name__ == "__main__":

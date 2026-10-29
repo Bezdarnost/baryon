@@ -46,7 +46,7 @@ jxl = image.to_jxl(lossless=False, distance=1.0)  # lossy, visually lossless
 
 | Format | Encoder | Options |
 |---|---|---|
-| JPEG XL | libjxl (built into the wheel) | `lossless`, `distance`, `effort`, `transcode_jpeg` |
+| JPEG XL | libjxl (built into the wheel) | `lossless`, `distance`, `effort`, `transcode_jpeg`, `jpeg_fallback` |
 | PNG | `png` crate with `fdeflate` | `compression`: `"fast"`, `"balanced"`, `"high"` |
 | JPEG | `jpeg-encoder` (AVX2 when available) | `quality` 1–100; 8-bit L or RGB only |
 
@@ -60,5 +60,9 @@ first:
 images = baryon.open_all(sources)
 baryon.save_all(images, [p.with_suffix(".jxl") for p in sources])
 ```
+
+About 1% of JPEGs cannot be transcoded losslessly; pass `jpeg_fallback="lossy"` to encode
+those from their pixels instead of raising (`save_all` returns their positions). See the
+[JPEG XL guide](guide/jpeg-xl.md#recommendation) for the details.
 
 See the [JPEG XL guide](guide/jpeg-xl.md) for when to convert to JPEG XL.

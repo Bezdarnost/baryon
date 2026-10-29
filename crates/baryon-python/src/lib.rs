@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{PoisonError, RwLock};
 
 use baryon_image::{
-    ColorType, Error, Executor, Image, JxlOptions, JxlQuality, LazyImage, PixelBuffer,
+    ColorType, EncodedJxl, Error, Executor, Image, JxlOptions, JxlQuality, LazyImage, PixelBuffer,
     PngCompression, Rect, ResizeFilter, Rotation,
 };
 use numpy::IntoPyArray;
@@ -61,20 +61,80 @@ fn to_py_err(err: Error) -> PyErr {
     }
 }
 
-/// Converts the error for item `index` of a batch, keeping its exception type and prefixing
-/// the message with the position, e.g. ``images[3]: failed to decode ...``.
-fn to_py_err_at(py: Python<'_>, what: &str, index: usize, err: Error) -> PyErr {
-    let err = to_py_err(err);
-    let message = format!("{what}[{index}]: {}", err.value(py));
+/// Re-raises `err` as the same exception type with `message`.
+fn with_message(py: Python<'_>, err: &PyErr, message: String) -> PyErr {
     match err.get_type(py).call1((message,)) {
         Ok(value) => PyErr::from_value(value),
         Err(failed) => failed,
     }
 }
 
-/// Builds encoder options from the keyword arguments shared by ``to_jxl`` and ``to_jxl_all``.
-fn jxl_options(lossless: bool, distance: f32, effort: u8, transcode_jpeg: bool) -> JxlOptions {
-    JxlOptions {
+/// How many failed positions a batch error message lists before abbreviating.
+const LISTED_FAILURES: usize = 10;
+
+/// Collects the results of a batch, turning each success into a Python value with `convert`.
+///
+/// If any item failed, raises the first failure as its own exception type with its position
+/// prefixed, e.g. ``images[3]: failed to decode ...``, followed by the positions of the other
+/// failures. The exception's ``failures`` attribute lists every failure as a
+/// ``(position, exception)`` pair.
+fn collect_batch<T, U>(
+    py: Python<'_>,
+    what: &str,
+    results: Vec<baryon_image::Result<T>>,
+    mut convert: impl FnMut(T) -> PyResult<U>,
+) -> PyResult<Vec<U>> {
+    let mut values = Vec::with_capacity(results.len());
+    let mut failures = Vec::new();
+    for (index, result) in results.into_iter().enumerate() {
+        match result.map_err(to_py_err).and_then(&mut convert) {
+            Ok(value) => values.push(value),
+            Err(err) => {
+                let message = format!("{what}[{index}]: {}", err.value(py));
+                failures.push((index, with_message(py, &err, message)));
+            }
+        }
+    }
+    let Some((_, first)) = failures.first() else {
+        return Ok(values);
+    };
+    let mut message = first.value(py).to_string();
+    let others = &failures[1..];
+    if !others.is_empty() {
+        let listed: Vec<String> = others
+            .iter()
+            .take(LISTED_FAILURES)
+            .map(|(index, _)| format!("{what}[{index}]"))
+            .collect();
+        let ellipsis = if others.len() > LISTED_FAILURES {
+            ", ..."
+        } else {
+            ""
+        };
+        message = format!(
+            "{message} ({} more failed: {}{ellipsis})",
+            others.len(),
+            listed.join(", ")
+        );
+    }
+    let err = with_message(py, first, message);
+    let pairs: Vec<(usize, Bound<'_, PyAny>)> = failures
+        .iter()
+        .map(|(index, failure)| (*index, failure.value(py).clone().into_any()))
+        .collect();
+    err.value(py).setattr(intern!(py, "failures"), pairs)?;
+    Err(err)
+}
+
+/// Builds and checks encoder options from the JPEG XL keyword arguments.
+fn jxl_options(
+    lossless: bool,
+    distance: f32,
+    effort: u8,
+    transcode_jpeg: bool,
+    jpeg_fallback: &str,
+) -> PyResult<JxlOptions> {
+    let options = JxlOptions {
         quality: if lossless {
             JxlQuality::Lossless
         } else {
@@ -82,8 +142,23 @@ fn jxl_options(lossless: bool, distance: f32, effort: u8, transcode_jpeg: bool) 
         },
         effort,
         transcode_jpeg,
-    }
+        jpeg_fallback: match jpeg_fallback {
+            "error" => None,
+            "lossless" => Some(JxlQuality::Lossless),
+            "lossy" => Some(JxlQuality::Distance(distance)),
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "jpeg_fallback must be \"error\", \"lossless\" or \"lossy\", got \
+                     {jpeg_fallback:?}"
+                )));
+            }
+        },
+    };
+    options.validate().map_err(to_py_err)?;
+    Ok(options)
 }
+
+const DEFAULT_JPEG_FALLBACK: &str = "error";
 
 /// Parses the ``compression`` argument of the PNG encoder.
 fn png_compression(name: &str) -> PyResult<PngCompression> {
@@ -158,6 +233,7 @@ struct SaveOptions {
     distance: Option<f32>,
     effort: Option<u8>,
     transcode_jpeg: Option<bool>,
+    jpeg_fallback: Option<String>,
 }
 
 /// A fully configured encoder for one format.
@@ -179,6 +255,11 @@ impl SaveOptions {
             (
                 "transcode_jpeg",
                 self.transcode_jpeg.is_some(),
+                OutputFormat::Jxl,
+            ),
+            (
+                "jpeg_fallback",
+                self.jpeg_fallback.is_some(),
                 OutputFormat::Jxl,
             ),
         ];
@@ -204,24 +285,37 @@ impl SaveOptions {
                 self.distance.unwrap_or(1.0),
                 self.effort.unwrap_or(7),
                 self.transcode_jpeg.unwrap_or(true),
-            )),
+                self.jpeg_fallback
+                    .as_deref()
+                    .unwrap_or(DEFAULT_JPEG_FALLBACK),
+            )?),
         })
     }
 }
 
 impl Encoder {
     fn encode(self, image: &LazyImage) -> baryon_image::Result<Vec<u8>> {
-        match self {
-            Self::Jpeg(quality) => image.to_jpeg(quality),
-            Self::Png(compression) => image.to_png(compression),
-            Self::Jxl(options) => image.to_jxl(&options),
-        }
+        self.encode_reporting(image).map(|encoded| encoded.data)
     }
 
-    /// Encodes `image` and writes it to `path`.
-    fn save(self, image: &LazyImage, path: &Path) -> baryon_image::Result<()> {
-        let data = self.encode(image)?;
-        std::fs::write(path, data).map_err(Error::Io)
+    /// Encodes `image`, also telling whether a JPEG XL fallback was used.
+    fn encode_reporting(self, image: &LazyImage) -> baryon_image::Result<EncodedJxl> {
+        let data = match self {
+            Self::Jpeg(quality) => image.to_jpeg(quality)?,
+            Self::Png(compression) => image.to_png(compression)?,
+            Self::Jxl(options) => return image.encode_jxl(&options),
+        };
+        Ok(EncodedJxl {
+            data,
+            fell_back: false,
+        })
+    }
+
+    /// Encodes `image` and writes it to `path`. Returns whether a JPEG XL fallback was used.
+    fn save(self, image: &LazyImage, path: &Path) -> baryon_image::Result<bool> {
+        let encoded = self.encode_reporting(image)?;
+        std::fs::write(path, encoded.data).map_err(Error::Io)?;
+        Ok(encoded.fell_back)
     }
 }
 
@@ -358,7 +452,9 @@ fn open(py: Python<'_>, source: Input) -> PyResult<PyImage> {
 /// Equivalent to ``[open(s) for s in sources]``, but faster for many files.
 ///
 /// If any source fails, the first failure is raised as the same exception :func:`open`
-/// would raise, with its position prefixed to the message, e.g. ``sources[3]: ...``.
+/// would raise, with its position prefixed to the message, e.g. ``sources[3]: ...``, and the
+/// positions of any other failures appended. Its ``failures`` attribute lists every failure
+/// as a ``(position, exception)`` pair.
 ///
 /// Args:
 ///     sources: File paths and/or bytes-like objects, as accepted by :func:`open`.
@@ -367,15 +463,7 @@ fn open_all(py: Python<'_>, sources: Vec<Input>) -> PyResult<Vec<PyImage>> {
     let executor = executor()?;
     let opened: Vec<_> =
         py.detach(|| executor.install(|| sources.into_par_iter().map(Input::open).collect()));
-    opened
-        .into_iter()
-        .enumerate()
-        .map(|(index, result)| {
-            result
-                .map(PyImage::from)
-                .map_err(|err| to_py_err_at(py, "sources", index, err))
-        })
-        .collect()
+    collect_batch(py, "sources", opened, |inner| Ok(PyImage::from(inner)))
 }
 
 /// Encodes many images and writes them to files, in parallel on all threads.
@@ -395,17 +483,25 @@ fn open_all(py: Python<'_>, sources: Vec<Input>) -> PyResult<Vec<PyImage>> {
 ///     distance: JPEG XL option; see :meth:`Image.to_jxl`.
 ///     effort: JPEG XL option; see :meth:`Image.to_jxl`.
 ///     transcode_jpeg: JPEG XL option; see :meth:`Image.to_jxl`.
+///     jpeg_fallback: JPEG XL option; see :meth:`Image.to_jxl`.
+///
+/// Returns:
+///     The positions of the JPEGs that could not be transcoded and were encoded as
+///     ``jpeg_fallback`` asks instead, in increasing order; empty without a fallback.
 ///
 /// Raises:
 ///     ValueError: ``images`` and ``paths`` differ in length, a format cannot be determined,
-///         or an option does not apply to a file's format. Nothing is written in that case.
+///         or an option does not apply to a file's format or is out of range. Nothing is
+///         written in that case.
 ///
 /// If writing any image fails, the others are still written and the first failure is raised
-/// with its position prefixed to the message, e.g. ``images[3]: ...``.
+/// with its position prefixed to the message, e.g. ``images[3]: ...``, and the positions of
+/// any other failures appended. Its ``failures`` attribute lists every failure as a
+/// ``(position, exception)`` pair.
 #[pyfunction]
 #[pyo3(signature = (
     images, paths, *, format = None, quality = None, compression = None, lossless = None,
-    distance = None, effort = None, transcode_jpeg = None
+    distance = None, effort = None, transcode_jpeg = None, jpeg_fallback = None
 ))]
 #[expect(
     clippy::needless_pass_by_value,
@@ -423,7 +519,8 @@ fn save_all(
     distance: Option<f32>,
     effort: Option<u8>,
     transcode_jpeg: Option<bool>,
-) -> PyResult<()> {
+    jpeg_fallback: Option<String>,
+) -> PyResult<Vec<usize>> {
     if images.len() != paths.len() {
         return Err(PyValueError::new_err(format!(
             "got {} images but {} paths",
@@ -438,6 +535,7 @@ fn save_all(
         distance,
         effort,
         transcode_jpeg,
+        jpeg_fallback,
     };
     // Every encoder is configured, and every option checked, before anything is written.
     let encoders = paths
@@ -459,25 +557,28 @@ fn save_all(
             |(image, path, encoder)| encoder.save(image, path),
         )
     });
-    results
+    let fell_back = collect_batch(py, "images", results, Ok)?;
+    Ok(fell_back
         .into_iter()
         .enumerate()
-        .find_map(|(index, result)| result.err().map(|err| (index, err)))
-        .map_or(Ok(()), |(index, err)| {
-            Err(to_py_err_at(py, "images", index, err))
-        })
+        .filter_map(|(index, fell_back)| fell_back.then_some(index))
+        .collect())
 }
 
 /// Encodes many images as JPEG XL in parallel; see :meth:`Image.to_jxl` for the options.
 ///
 /// If any image fails, the first failure is raised as the same exception
 /// :meth:`Image.to_jxl` would raise, with its position prefixed to the message, e.g.
-/// ``images[3]: ...``.
+/// ``images[3]: ...``, and the positions of any other failures appended. Its ``failures``
+/// attribute lists every failure as a ``(position, exception)`` pair.
 ///
 /// Returns:
 ///     One encoded file per image, in input order.
 #[pyfunction]
-#[pyo3(signature = (images, *, lossless = true, distance = 1.0, effort = 7, transcode_jpeg = true))]
+#[pyo3(signature = (
+    images, *, lossless = true, distance = 1.0, effort = 7, transcode_jpeg = true,
+    jpeg_fallback = DEFAULT_JPEG_FALLBACK
+))]
 #[expect(
     clippy::needless_pass_by_value,
     reason = "PyO3 extracts sequence arguments into an owned Vec"
@@ -489,23 +590,16 @@ fn to_jxl_all<'py>(
     distance: f32,
     effort: u8,
     transcode_jpeg: bool,
+    jpeg_fallback: &str,
 ) -> PyResult<Vec<Bound<'py, PyBytes>>> {
     let executor = executor()?;
-    let options = jxl_options(lossless, distance, effort, transcode_jpeg);
+    let options = jxl_options(lossless, distance, effort, transcode_jpeg, jpeg_fallback)?;
     let pipelines: Vec<LazyImage> = images
         .iter()
         .map(|image| image.get().inner.clone())
         .collect();
     let encoded = py.detach(|| LazyImage::to_jxl_all(&executor, &pipelines, &options));
-    encoded
-        .into_iter()
-        .enumerate()
-        .map(|(index, result)| {
-            result
-                .map(|data| PyBytes::new(py, &data))
-                .map_err(|err| to_py_err_at(py, "images", index, err))
-        })
-        .collect()
+    collect_batch(py, "images", encoded, |data| Ok(PyBytes::new(py, &data)))
 }
 
 /// Restores the original JPEG file from a JPEG XL file made by lossless JPEG transcoding.
@@ -538,7 +632,8 @@ fn jxl_to_jpeg(py: Python<'_>, source: Input) -> PyResult<Bound<'_, PyBytes>> {
 ///
 /// If any image fails, the first failure is raised as the same exception
 /// :meth:`Image.to_numpy` would raise, with its position prefixed to the message, e.g.
-/// ``images[3]: ...``.
+/// ``images[3]: ...``, and the positions of any other failures appended. Its ``failures``
+/// attribute lists every failure as a ``(position, exception)`` pair.
 ///
 /// Args:
 ///     images: Images from :func:`open` or :func:`open_all`, with any pending transformations.
@@ -560,14 +655,7 @@ fn to_numpy_all<'py>(
         .map(|image| image.get().inner.clone())
         .collect();
     let decoded = py.detach(|| LazyImage::execute_all(&executor, &pipelines));
-    decoded
-        .into_iter()
-        .enumerate()
-        .map(|(index, result)| {
-            let image = result.map_err(|err| to_py_err_at(py, "images", index, err))?;
-            into_ndarray(py, image)
-        })
-        .collect()
+    collect_batch(py, "images", decoded, |image| into_ndarray(py, image))
 }
 
 /// A lazily decoded image.
@@ -779,12 +867,21 @@ impl PyImage {
     ///     effort: Encoder effort, 1 (fastest) to 10 (smallest); 7 is libjxl's default.
     ///     transcode_jpeg: Transcode untransformed JPEGs instead of encoding their pixels
     ///         (default). Encoding a JPEG's pixels losslessly produces much larger files.
+    ///     jpeg_fallback: What to do with a JPEG that libjxl cannot transcode, about 1% of
+    ///         real-world photos (mostly large progressive files): ``"error"`` (default) raises
+    ///         :class:`EncodeError`, ``"lossy"`` encodes its pixels at ``distance``, and
+    ///         ``"lossless"`` encodes its pixels exactly, typically several times larger than
+    ///         the JPEG. Applies only when transcoding.
     ///
     /// Raises:
-    ///     EncodeError: The encoder failed, or the JPEG cannot be transcoded losslessly (pass
-    ///         ``transcode_jpeg=False`` to encode its pixels instead).
-    ///     ValueError: ``distance`` or ``effort`` is out of range.
-    #[pyo3(signature = (*, lossless = true, distance = 1.0, effort = 7, transcode_jpeg = true))]
+    ///     EncodeError: The encoder failed, or the JPEG cannot be transcoded losslessly and
+    ///         ``jpeg_fallback`` is ``"error"``.
+    ///     ValueError: An option is out of range, or ``jpeg_fallback`` is set while not
+    ///         transcoding (lossy or ``transcode_jpeg=False``).
+    #[pyo3(signature = (
+        *, lossless = true, distance = 1.0, effort = 7, transcode_jpeg = true,
+        jpeg_fallback = DEFAULT_JPEG_FALLBACK
+    ))]
     fn to_jxl<'py>(
         &self,
         py: Python<'py>,
@@ -792,9 +889,10 @@ impl PyImage {
         distance: f32,
         effort: u8,
         transcode_jpeg: bool,
+        jpeg_fallback: &str,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let executor = executor()?;
-        let options = jxl_options(lossless, distance, effort, transcode_jpeg);
+        let options = jxl_options(lossless, distance, effort, transcode_jpeg, jpeg_fallback)?;
         let data = py
             .detach(|| executor.install(|| self.inner.to_jxl(&options)))
             .map_err(to_py_err)?;
@@ -846,15 +944,17 @@ impl PyImage {
     ///     distance: JPEG XL option; see :meth:`to_jxl`.
     ///     effort: JPEG XL option; see :meth:`to_jxl`.
     ///     transcode_jpeg: JPEG XL option; see :meth:`to_jxl`.
+    ///     jpeg_fallback: JPEG XL option; see :meth:`to_jxl`.
     ///
     /// Raises:
-    ///     ValueError: The format cannot be determined, an option does not apply to it, or
-    ///         it cannot store this image (JPEG has no alpha channel and no 16-bit samples).
+    ///     ValueError: The format cannot be determined, an option does not apply to it or is
+    ///         out of range, or the format cannot store this image (JPEG has no alpha channel
+    ///         and no 16-bit samples).
     ///     EncodeError: The encoder failed.
     ///     OSError: The file could not be written.
     #[pyo3(signature = (
         path, *, format = None, quality = None, compression = None, lossless = None,
-        distance = None, effort = None, transcode_jpeg = None
+        distance = None, effort = None, transcode_jpeg = None, jpeg_fallback = None
     ))]
     #[expect(
         clippy::too_many_arguments,
@@ -872,6 +972,7 @@ impl PyImage {
         distance: Option<f32>,
         effort: Option<u8>,
         transcode_jpeg: Option<bool>,
+        jpeg_fallback: Option<String>,
     ) -> PyResult<()> {
         let options = SaveOptions {
             quality,
@@ -880,10 +981,12 @@ impl PyImage {
             distance,
             effort,
             transcode_jpeg,
+            jpeg_fallback,
         };
         let encoder = options.encoder(OutputFormat::resolve(&path, format)?)?;
         let executor = executor()?;
         py.detach(|| executor.install(|| encoder.save(&self.inner, &path)))
+            .map(drop)
             .map_err(to_py_err)
     }
 

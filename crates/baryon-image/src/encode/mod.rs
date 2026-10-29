@@ -10,7 +10,7 @@ mod png;
 
 pub use jpeg::encode_jpeg;
 #[cfg(feature = "jxl-encode")]
-pub use jxl::{JxlOptions, JxlQuality, encode_pixels, jxl_to_jpeg};
+pub use jxl::{EncodedJxl, JxlOptions, JxlQuality, encode_pixels, jxl_to_jpeg};
 pub use png::{PngCompression, encode_png};
 
 use baryon_core::{Executor, Result};

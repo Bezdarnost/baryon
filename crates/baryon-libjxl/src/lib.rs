@@ -79,13 +79,15 @@ impl Error {
         self.code == -3
     }
 
-    /// Whether libjxl rejected a JPEG it cannot transcode losslessly (an unusual JPEG
-    /// structure), as opposed to a general failure. Such files can still be encoded from their
-    /// decoded pixels.
+    /// Whether libjxl rejected a JPEG it cannot transcode losslessly, as opposed to a general
+    /// failure. Such files can still be encoded from their decoded pixels.
     pub const fn is_untranscodable_jpeg(self) -> bool {
-        // JXL_ENC_ERR_GENERIC and JXL_ENC_ERR_JBRD are what AddJPEGFrame reports for JPEGs
-        // whose structure it cannot represent.
-        matches!(self.code, 1 | 3)
+        // AddJPEGFrame reports JXL_ENC_ERR_JBRD when the data needed to restore the JPEG
+        // exceeds a format limit (seen with large progressive files, whose per-scan tables can
+        // outgrow the 65555 entries the format allows), JXL_ENC_ERR_BAD_INPUT for parts it
+        // cannot parse (such as an invalid ICC profile), and JXL_ENC_ERR_GENERIC for
+        // structures it cannot represent.
+        matches!(self.code, 1 | 3 | 4)
     }
 }
 
@@ -94,8 +96,8 @@ impl fmt::Display for Error {
         let message = match self.code {
             1 => "libjxl reported a generic error",
             2 => "libjxl ran out of memory",
-            3 => "the JPEG cannot be transcoded losslessly",
-            4 => "libjxl rejected the input as invalid",
+            3 => "the data needed to restore the original JPEG exceeds a JPEG XL format limit",
+            4 => "libjxl could not parse part of the input",
             0x80 => "the requested encoding is not supported by libjxl",
             0x81 => "libjxl reported an API usage error (this is a bug in baryon)",
             -1 => "memory allocation failed",

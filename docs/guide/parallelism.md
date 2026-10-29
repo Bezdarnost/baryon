@@ -16,7 +16,9 @@ arrays = baryon.to_numpy_all(crops)  # parallel decode, input order
 thread. The largest images start first (their sizes are known from the headers), so a big
 photo never starts last and keeps the other threads waiting; on mixed photo sizes this alone
 raised 16-thread JPEG throughput by about 15%. If an image fails, the error names its
-position, e.g. `DecodeError: images[17]: failed to decode jxl image: ...`.
+position, e.g. `DecodeError: images[17]: failed to decode jxl image: ...`, followed by the
+positions of any other failures; the exception's `failures` attribute lists every
+`(position, exception)` pair, and the other images are still processed.
 
 `to_jxl_all` and `save_all` schedule the same way, and `save_all` also writes the files from
 the worker threads.

@@ -15,6 +15,7 @@ Filter: TypeAlias = Literal[
 ]
 Source: TypeAlias = str | os.PathLike[str] | bytes | bytearray | memoryview
 Pixels: TypeAlias = npt.NDArray[np.uint8] | npt.NDArray[np.uint16]
+JpegFallback: TypeAlias = Literal["error", "lossless", "lossy"]
 
 class BaryonError(Exception):
     """Base class for every error raised by baryon."""
@@ -49,7 +50,9 @@ def open_all(sources: Sequence[Source]) -> list[Image]:
     Equivalent to ``[open(s) for s in sources]``, but faster for many files.
 
     If any source fails, the first failure is raised as the same exception :func:`open`
-    would raise, with its position prefixed to the message, e.g. ``sources[3]: ...``.
+    would raise, with its position prefixed to the message, e.g. ``sources[3]: ...``, and the
+    positions of any other failures appended. Its ``failures`` attribute lists every failure
+    as a ``(position, exception)`` pair.
 
     Args:
         sources: File paths and/or bytes-like objects, as accepted by :func:`open`.
@@ -63,7 +66,8 @@ def to_numpy_all(images: Sequence[Image]) -> list[Pixels]:
 
     If any image fails, the first failure is raised as the same exception
     :meth:`Image.to_numpy` would raise, with its position prefixed to the message, e.g.
-    ``images[3]: ...``.
+    ``images[3]: ...``, and the positions of any other failures appended. Its ``failures``
+    attribute lists every failure as a ``(position, exception)`` pair.
 
     Args:
         images: Images from :func:`open` or :func:`open_all`, with any pending transformations.
@@ -79,12 +83,14 @@ def to_jxl_all(
     distance: float = 1.0,
     effort: int = 7,
     transcode_jpeg: bool = True,
+    jpeg_fallback: JpegFallback = "error",
 ) -> list[bytes]:
     """Encodes many images as JPEG XL in parallel; see :meth:`Image.to_jxl` for the options.
 
     If any image fails, the first failure is raised as the same exception
     :meth:`Image.to_jxl` would raise, with its position prefixed to the message, e.g.
-    ``images[3]: ...``.
+    ``images[3]: ...``, and the positions of any other failures appended. Its ``failures``
+    attribute lists every failure as a ``(position, exception)`` pair.
 
     Returns:
         One encoded file per image, in input order.
@@ -101,7 +107,8 @@ def save_all(
     distance: float | None = None,
     effort: int | None = None,
     transcode_jpeg: bool | None = None,
-) -> None:
+    jpeg_fallback: JpegFallback | None = None,
+) -> list[int]:
     """Encodes many images and writes them to files, in parallel on all threads.
 
     This is the fastest way to convert a dataset: decoding, encoding and writing all run
@@ -119,13 +126,21 @@ def save_all(
         distance: JPEG XL option; see :meth:`Image.to_jxl`.
         effort: JPEG XL option; see :meth:`Image.to_jxl`.
         transcode_jpeg: JPEG XL option; see :meth:`Image.to_jxl`.
+        jpeg_fallback: JPEG XL option; see :meth:`Image.to_jxl`.
+
+    Returns:
+        The positions of the JPEGs that could not be transcoded and were encoded as
+        ``jpeg_fallback`` asks instead, in increasing order; empty without a fallback.
 
     Raises:
         ValueError: ``images`` and ``paths`` differ in length, a format cannot be determined,
-            or an option does not apply to a file's format. Nothing is written in that case.
+            or an option does not apply to a file's format or is out of range. Nothing is
+            written in that case.
 
     If writing any image fails, the others are still written and the first failure is raised
-    with its position prefixed to the message, e.g. ``images[3]: ...``.
+    with its position prefixed to the message, e.g. ``images[3]: ...``, and the positions of
+    any other failures appended. Its ``failures`` attribute lists every failure as a
+    ``(position, exception)`` pair.
     """
 
 def jxl_to_jpeg(source: Source) -> bytes:
@@ -276,6 +291,7 @@ class Image:
         distance: float = 1.0,
         effort: int = 7,
         transcode_jpeg: bool = True,
+        jpeg_fallback: JpegFallback = "error",
     ) -> bytes:
         """Encodes the image, with its pending transformations, as a JPEG XL file.
 
@@ -291,11 +307,17 @@ class Image:
             effort: Encoder effort, 1 (fastest) to 10 (smallest); 7 is libjxl's default.
             transcode_jpeg: Transcode untransformed JPEGs instead of encoding their pixels
                 (default). Encoding a JPEG's pixels losslessly produces much larger files.
+            jpeg_fallback: What to do with a JPEG that libjxl cannot transcode, about 1% of
+                real-world photos (mostly large progressive files): ``"error"`` (default) raises
+                :class:`EncodeError`, ``"lossy"`` encodes its pixels at ``distance``, and
+                ``"lossless"`` encodes its pixels exactly, typically several times larger than
+                the JPEG. Applies only when transcoding.
 
         Raises:
-            EncodeError: The encoder failed, or the JPEG cannot be transcoded losslessly (pass
-                ``transcode_jpeg=False`` to encode its pixels instead).
-            ValueError: ``distance`` or ``effort`` is out of range.
+            EncodeError: The encoder failed, or the JPEG cannot be transcoded losslessly and
+                ``jpeg_fallback`` is ``"error"``.
+            ValueError: An option is out of range, or ``jpeg_fallback`` is set while not
+                transcoding (lossy or ``transcode_jpeg=False``).
         """
     def to_png(self, *, compression: Literal["fast", "balanced", "high"] = "balanced") -> bytes:
         """Encodes the image, with its pending transformations, as a PNG file.
@@ -332,6 +354,7 @@ class Image:
         distance: float | None = None,
         effort: int | None = None,
         transcode_jpeg: bool | None = None,
+        jpeg_fallback: JpegFallback | None = None,
     ) -> None:
         """Encodes the image, with its pending transformations, and writes it to a file.
 
@@ -348,10 +371,12 @@ class Image:
             distance: JPEG XL option; see :meth:`to_jxl`.
             effort: JPEG XL option; see :meth:`to_jxl`.
             transcode_jpeg: JPEG XL option; see :meth:`to_jxl`.
+            jpeg_fallback: JPEG XL option; see :meth:`to_jxl`.
 
         Raises:
-            ValueError: The format cannot be determined, an option does not apply to it, or
-                it cannot store this image (JPEG has no alpha channel and no 16-bit samples).
+            ValueError: The format cannot be determined, an option does not apply to it or is
+                out of range, or the format cannot store this image (JPEG has no alpha channel
+                and no 16-bit samples).
             EncodeError: The encoder failed.
             OSError: The file could not be written.
         """

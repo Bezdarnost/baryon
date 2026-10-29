@@ -68,8 +68,14 @@ One thread, median 16-megapixel photo (see [Benchmarks](../benchmarks.md) for al
 **Keep JPEG when** a pipeline decodes every image in full at high throughput and CPU, not
 storage or I/O, is the bottleneck: a full JPEG XL decode costs about 1.8× the CPU of the JPEG.
 
-**Keep the few JPEGs libjxl cannot transcode** (about 1% in our dataset) as JPEG; encoding
-their pixels instead would make them larger.
+**About 1% of JPEGs cannot be transcoded.** In a 6,757-photo dataset, libjxl refused 82: 79
+progressive photos, mostly large (median 30 megapixels), whose restore data outgrows a limit of
+the JPEG XL format, one with 6 MB of data after the image, and two with an ICC profile libjxl
+cannot parse. By default these raise `EncodeError`. With `jpeg_fallback="lossy"` they are
+encoded from their pixels at `distance` instead (visually lossless at the default 1.0; 29%
+smaller than the JPEGs in that dataset, but no longer restorable bit for bit), and
+`jpeg_fallback="lossless"` keeps every pixel at several times the JPEG's size. Keeping them as
+JPEG is the other option.
 
 ## Converting with baryon
 
@@ -94,11 +100,15 @@ import baryon
 paths = sorted(Path("dataset").rglob("*.jpg"))
 for start in range(0, len(paths), 256):
     chunk = paths[start : start + 256]
-    baryon.save_all(baryon.open_all(chunk), [p.with_suffix(".jxl") for p in chunk])
+    targets = [p.with_suffix(".jxl") for p in chunk]
+    lossy = baryon.save_all(baryon.open_all(chunk), targets, jpeg_fallback="lossy")
+    for i in lossy:
+        print(f"{chunk[i]} could not be transcoded; encoded lossy instead")
 ```
 
-`save_all` decodes, encodes and writes on every thread, largest files first. If a file fails,
-the rest of the chunk is still written and the first failure is raised, naming its position;
-use `Image.save` one file at a time if you want to skip failures (for example the rare JPEG
-that cannot be transcoded) and keep going. `benchmarks/bench_convert.py` converts a sample of your data
-and verifies every file, so you can check the savings before converting everything.
+`save_all` decodes, encodes and writes on every thread, largest files first, and returns the
+positions of the files that used the fallback. If any file fails, the rest of the chunk is
+still written and the first failure is raised with the positions of all the others in its
+message; its `failures` attribute holds every `(position, exception)` pair, so you can retry
+or skip exactly those files. `benchmarks/bench_convert.py` converts a sample of your data and
+verifies every file, so you can check the savings before converting everything.
