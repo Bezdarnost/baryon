@@ -19,15 +19,13 @@ baryon-core.workspace = true
 baryon-libjxl = { workspace = true, optional = true }
 bytemuck.workspace = true
 fast_image_resize.workspace = true
+jpeg-encoder.workspace = true
 jxl.workspace = true
 jxl-oxide.workspace = true
 png.workspace = true
 rayon.workspace = true
 zune-core.workspace = true
 zune-jpeg.workspace = true
-
-[dev-dependencies]
-jpeg-encoder.workspace = true
 
 [lints]
 workspace = true

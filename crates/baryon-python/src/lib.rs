@@ -7,12 +7,12 @@
 // Doc comments here become Python docstrings, written in reST/Google style rather than rustdoc.
 #![allow(clippy::doc_markdown)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{PoisonError, RwLock};
 
 use baryon_image::{
-    Error, Executor, Image, JxlOptions, JxlQuality, LazyImage, PixelBuffer, Rect, ResizeFilter,
-    Rotation,
+    Error, Executor, Image, JxlOptions, JxlQuality, LazyImage, PixelBuffer, PngCompression, Rect,
+    ResizeFilter, Rotation,
 };
 use numpy::IntoPyArray;
 use numpy::ndarray::{Array3, ShapeError};
@@ -84,6 +84,148 @@ fn jxl_options(lossless: bool, distance: f32, effort: u8, transcode_jpeg: bool) 
         transcode_jpeg,
     }
 }
+
+/// Parses the ``compression`` argument of the PNG encoder.
+fn png_compression(name: &str) -> PyResult<PngCompression> {
+    match name {
+        "fast" => Ok(PngCompression::Fast),
+        "balanced" => Ok(PngCompression::Balanced),
+        "high" => Ok(PngCompression::High),
+        _ => Err(PyValueError::new_err(format!(
+            "PNG compression must be \"fast\", \"balanced\" or \"high\", got {name:?}"
+        ))),
+    }
+}
+
+/// A file format that baryon can write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputFormat {
+    Jpeg,
+    Png,
+    Jxl,
+}
+
+impl OutputFormat {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Jpeg => "JPEG",
+            Self::Png => "PNG",
+            Self::Jxl => "JPEG XL",
+        }
+    }
+
+    fn from_name(name: &str) -> PyResult<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "jpeg" | "jpg" => Ok(Self::Jpeg),
+            "png" => Ok(Self::Png),
+            "jxl" => Ok(Self::Jxl),
+            _ => Err(PyValueError::new_err(format!(
+                "cannot write format {name:?}; supported formats are \"jpeg\", \"png\" and \
+                 \"jxl\""
+            ))),
+        }
+    }
+
+    /// The explicit `format`, or the one named by the file extension.
+    fn resolve(path: &Path, format: Option<&str>) -> PyResult<Self> {
+        if let Some(name) = format {
+            return Self::from_name(name);
+        }
+        let extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        match extension.as_deref() {
+            Some("jpg" | "jpeg" | "jpe" | "jfif") => Ok(Self::Jpeg),
+            Some("png") => Ok(Self::Png),
+            Some("jxl") => Ok(Self::Jxl),
+            _ => Err(PyValueError::new_err(format!(
+                "cannot tell the format from the extension of {}; pass format=\"jpeg\", \
+                 \"png\" or \"jxl\"",
+                path.display()
+            ))),
+        }
+    }
+}
+
+/// The encoder keyword arguments of ``save`` and ``save_all``. Each applies to one format,
+/// and passing one that does not apply to the chosen format is an error.
+#[derive(Debug, Clone, Default)]
+struct SaveOptions {
+    quality: Option<u8>,
+    compression: Option<String>,
+    lossless: Option<bool>,
+    distance: Option<f32>,
+    effort: Option<u8>,
+    transcode_jpeg: Option<bool>,
+}
+
+/// A fully configured encoder for one format.
+#[derive(Debug, Clone, Copy)]
+enum Encoder {
+    Jpeg(u8),
+    Png(PngCompression),
+    Jxl(JxlOptions),
+}
+
+impl SaveOptions {
+    fn encoder(&self, format: OutputFormat) -> PyResult<Encoder> {
+        let given = [
+            ("quality", self.quality.is_some(), OutputFormat::Jpeg),
+            ("compression", self.compression.is_some(), OutputFormat::Png),
+            ("lossless", self.lossless.is_some(), OutputFormat::Jxl),
+            ("distance", self.distance.is_some(), OutputFormat::Jxl),
+            ("effort", self.effort.is_some(), OutputFormat::Jxl),
+            (
+                "transcode_jpeg",
+                self.transcode_jpeg.is_some(),
+                OutputFormat::Jxl,
+            ),
+        ];
+        if let Some((option, _, owner)) = given
+            .iter()
+            .find(|&&(_, set, owner)| set && owner != format)
+        {
+            return Err(PyValueError::new_err(format!(
+                "{option} applies to {}, not {}",
+                owner.name(),
+                format.name()
+            )));
+        }
+        Ok(match format {
+            OutputFormat::Jpeg => Encoder::Jpeg(self.quality.unwrap_or(DEFAULT_JPEG_QUALITY)),
+            OutputFormat::Png => Encoder::Png(
+                self.compression
+                    .as_deref()
+                    .map_or(Ok(PngCompression::default()), png_compression)?,
+            ),
+            OutputFormat::Jxl => Encoder::Jxl(jxl_options(
+                self.lossless.unwrap_or(true),
+                self.distance.unwrap_or(1.0),
+                self.effort.unwrap_or(7),
+                self.transcode_jpeg.unwrap_or(true),
+            )),
+        })
+    }
+}
+
+impl Encoder {
+    fn encode(self, image: &LazyImage) -> baryon_image::Result<Vec<u8>> {
+        match self {
+            Self::Jpeg(quality) => image.to_jpeg(quality),
+            Self::Png(compression) => image.to_png(compression),
+            Self::Jxl(options) => image.to_jxl(&options),
+        }
+    }
+
+    /// Encodes `image` and writes it to `path`.
+    fn save(self, image: &LazyImage, path: &Path) -> baryon_image::Result<()> {
+        let data = self.encode(image)?;
+        std::fs::write(path, data).map_err(Error::Io)
+    }
+}
+
+const DEFAULT_JPEG_QUALITY: u8 = 90;
 
 /// The process-wide executor, tagged with the id of the process that created it.
 static EXECUTOR: RwLock<Option<(u32, Executor)>> = RwLock::new(None);
@@ -234,6 +376,96 @@ fn open_all(py: Python<'_>, sources: Vec<Input>) -> PyResult<Vec<PyImage>> {
                 .map_err(|err| to_py_err_at(py, "sources", index, err))
         })
         .collect()
+}
+
+/// Encodes many images and writes them to files, in parallel on all threads.
+///
+/// This is the fastest way to convert a dataset: decoding, encoding and writing all run
+/// concurrently, the largest images first. Formats and options work as in
+/// :meth:`Image.save`; each file's format comes from its own extension unless ``format`` is
+/// given.
+///
+/// Args:
+///     images: The images to write.
+///     paths: One destination per image.
+///     format: The format of every file, overriding the extensions.
+///     quality: JPEG quality; see :meth:`Image.save`.
+///     compression: PNG compression; see :meth:`Image.save`.
+///     lossless: JPEG XL option; see :meth:`Image.to_jxl`.
+///     distance: JPEG XL option; see :meth:`Image.to_jxl`.
+///     effort: JPEG XL option; see :meth:`Image.to_jxl`.
+///     transcode_jpeg: JPEG XL option; see :meth:`Image.to_jxl`.
+///
+/// Raises:
+///     ValueError: ``images`` and ``paths`` differ in length, a format cannot be determined,
+///         or an option does not apply to a file's format. Nothing is written in that case.
+///
+/// If writing any image fails, the others are still written and the first failure is raised
+/// with its position prefixed to the message, e.g. ``images[3]: ...``.
+#[pyfunction]
+#[pyo3(signature = (
+    images, paths, *, format = None, quality = None, compression = None, lossless = None,
+    distance = None, effort = None, transcode_jpeg = None
+))]
+#[expect(
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    reason = "PyO3 extracts sequence arguments into an owned Vec; options mirror Image.save"
+)]
+fn save_all(
+    py: Python<'_>,
+    images: Vec<Bound<'_, PyImage>>,
+    paths: Vec<PathBuf>,
+    format: Option<&str>,
+    quality: Option<u8>,
+    compression: Option<String>,
+    lossless: Option<bool>,
+    distance: Option<f32>,
+    effort: Option<u8>,
+    transcode_jpeg: Option<bool>,
+) -> PyResult<()> {
+    if images.len() != paths.len() {
+        return Err(PyValueError::new_err(format!(
+            "got {} images but {} paths",
+            images.len(),
+            paths.len()
+        )));
+    }
+    let options = SaveOptions {
+        quality,
+        compression,
+        lossless,
+        distance,
+        effort,
+        transcode_jpeg,
+    };
+    // Every encoder is configured, and every option checked, before anything is written.
+    let encoders = paths
+        .iter()
+        .map(|path| options.encoder(OutputFormat::resolve(path, format)?))
+        .collect::<PyResult<Vec<_>>>()?;
+    let jobs: Vec<(LazyImage, &Path, Encoder)> = images
+        .iter()
+        .zip(&paths)
+        .zip(encoders)
+        .map(|((image, path), encoder)| (image.get().inner.clone(), path.as_path(), encoder))
+        .collect();
+
+    let executor = executor()?;
+    let results = py.detach(|| {
+        executor.map_by_cost(
+            &jobs,
+            |(image, _, _)| u64::from(image.width()) * u64::from(image.height()),
+            |(image, path, encoder)| encoder.save(image, path),
+        )
+    });
+    results
+        .into_iter()
+        .enumerate()
+        .find_map(|(index, result)| result.err().map(|err| (index, err)))
+        .map_or(Ok(()), |(index, err)| {
+            Err(to_py_err_at(py, "images", index, err))
+        })
 }
 
 /// Encodes many images as JPEG XL in parallel; see :meth:`Image.to_jxl` for the options.
@@ -544,6 +776,92 @@ impl PyImage {
         Ok(PyBytes::new(py, &data))
     }
 
+    /// Encodes the image, with its pending transformations, as a PNG file.
+    ///
+    /// PNG is lossless; 16-bit images stay 16-bit.
+    ///
+    /// Args:
+    ///     compression: ``"fast"``, ``"balanced"`` (default) or ``"high"``. ``"fast"`` is
+    ///         several times faster for somewhat larger files; ``"high"`` is slower for
+    ///         slightly smaller ones.
+    ///
+    /// Raises:
+    ///     ValueError: ``compression`` is not one of the names above.
+    #[pyo3(signature = (*, compression = "balanced"))]
+    fn to_png<'py>(&self, py: Python<'py>, compression: &str) -> PyResult<Bound<'py, PyBytes>> {
+        self.encode(py, Encoder::Png(png_compression(compression)?))
+    }
+
+    /// Encodes the image, with its pending transformations, as a JPEG file.
+    ///
+    /// Args:
+    ///     quality: 1 to 100; 90 (default) is visually close to the original. Below 90 the
+    ///         colour channels are stored at half resolution, as most encoders do.
+    ///
+    /// Raises:
+    ///     ValueError: ``quality`` is out of range, or the image has an alpha channel or
+    ///         16-bit samples, which JPEG cannot store; use PNG or JPEG XL.
+    #[pyo3(signature = (*, quality = DEFAULT_JPEG_QUALITY))]
+    fn to_jpeg<'py>(&self, py: Python<'py>, quality: u8) -> PyResult<Bound<'py, PyBytes>> {
+        self.encode(py, Encoder::Jpeg(quality))
+    }
+
+    /// Encodes the image, with its pending transformations, and writes it to a file.
+    ///
+    /// The format comes from the extension (``.jpg``/``.jpeg``, ``.png``, ``.jxl``) unless
+    /// ``format`` is given. Encoder options apply to one format each, and passing one for
+    /// another format is an error rather than being silently ignored.
+    ///
+    /// Args:
+    ///     path: The file to write.
+    ///     format: ``"jpeg"``, ``"png"`` or ``"jxl"``, overriding the extension.
+    ///     quality: JPEG quality; see :meth:`to_jpeg`.
+    ///     compression: PNG compression; see :meth:`to_png`.
+    ///     lossless: JPEG XL option; see :meth:`to_jxl`.
+    ///     distance: JPEG XL option; see :meth:`to_jxl`.
+    ///     effort: JPEG XL option; see :meth:`to_jxl`.
+    ///     transcode_jpeg: JPEG XL option; see :meth:`to_jxl`.
+    ///
+    /// Raises:
+    ///     ValueError: The format cannot be determined, an option does not apply to it, or
+    ///         it cannot store this image (JPEG has no alpha channel and no 16-bit samples).
+    ///     EncodeError: The encoder failed.
+    ///     OSError: The file could not be written.
+    #[pyo3(signature = (
+        path, *, format = None, quality = None, compression = None, lossless = None,
+        distance = None, effort = None, transcode_jpeg = None
+    ))]
+    #[expect(
+        clippy::too_many_arguments,
+        clippy::needless_pass_by_value,
+        reason = "one keyword argument per encoder option; PyO3 extracts paths as owned values"
+    )]
+    fn save(
+        &self,
+        py: Python<'_>,
+        path: PathBuf,
+        format: Option<&str>,
+        quality: Option<u8>,
+        compression: Option<String>,
+        lossless: Option<bool>,
+        distance: Option<f32>,
+        effort: Option<u8>,
+        transcode_jpeg: Option<bool>,
+    ) -> PyResult<()> {
+        let options = SaveOptions {
+            quality,
+            compression,
+            lossless,
+            distance,
+            effort,
+            transcode_jpeg,
+        };
+        let encoder = options.encoder(OutputFormat::resolve(&path, format)?)?;
+        let executor = executor()?;
+        py.detach(|| executor.install(|| encoder.save(&self.inner, &path)))
+            .map_err(to_py_err)
+    }
+
     /// NumPy array protocol: ``numpy.asarray(image)`` decodes like :meth:`to_numpy`.
     #[pyo3(signature = (dtype = None, copy = None))]
     fn __array__<'py>(
@@ -585,6 +903,17 @@ impl PyImage {
     }
 }
 
+impl PyImage {
+    /// Runs the pipeline and encodes the result, releasing the GIL.
+    fn encode<'py>(&self, py: Python<'py>, encoder: Encoder) -> PyResult<Bound<'py, PyBytes>> {
+        let executor = executor()?;
+        let data = py
+            .detach(|| executor.install(|| encoder.encode(&self.inner)))
+            .map_err(to_py_err)?;
+        Ok(PyBytes::new(py, &data))
+    }
+}
+
 impl From<LazyImage> for PyImage {
     fn from(inner: LazyImage) -> Self {
         Self { inner }
@@ -620,6 +949,7 @@ fn _baryon(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(open_all, m)?)?;
     m.add_function(wrap_pyfunction!(to_numpy_all, m)?)?;
     m.add_function(wrap_pyfunction!(to_jxl_all, m)?)?;
+    m.add_function(wrap_pyfunction!(save_all, m)?)?;
     m.add_function(wrap_pyfunction!(jxl_to_jpeg, m)?)?;
     m.add_function(wrap_pyfunction!(set_num_threads, m)?)?;
     m.add_function(wrap_pyfunction!(get_num_threads, m)?)?;

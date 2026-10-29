@@ -1,4 +1,4 @@
-//! Encoding images as JPEG XL with the vendored libjxl, and restoring transcoded JPEGs.
+//! JPEG XL encoding with the vendored libjxl, and restoring transcoded JPEGs.
 
 use baryon_core::{Error, Executor, Format, Result};
 
@@ -78,7 +78,7 @@ impl LazyImage {
         images: &[Self],
         options: &JxlOptions,
     ) -> Vec<Result<Vec<u8>>> {
-        executor.map_by_cost(images, Self::cost, |image| image.to_jxl(options))
+        Self::encode_all(executor, images, |image| image.to_jxl(options))
     }
 }
 
@@ -146,9 +146,9 @@ mod tests {
     use crate::geometry::Rect;
     use crate::image::PixelBuffer;
 
-    const LOSSY: &[u8] = include_bytes!("../tests/fixtures/smooth-rgb8-lossy.jxl");
-    const RGBA16: &[u8] = include_bytes!("../tests/fixtures/gradient-rgba16-lossless.jxl");
-    const ADAM7: &[u8] = include_bytes!("../tests/fixtures/gradient-adam7.png");
+    const LOSSY: &[u8] = include_bytes!("../../tests/fixtures/smooth-rgb8-lossy.jxl");
+    const RGBA16: &[u8] = include_bytes!("../../tests/fixtures/gradient-rgba16-lossless.jxl");
+    const ADAM7: &[u8] = include_bytes!("../../tests/fixtures/gradient-adam7.png");
 
     fn jpeg(width: u16, height: u16) -> Vec<u8> {
         let pixels: Vec<u8> = (0..u32::from(width) * u32::from(height) * 3)

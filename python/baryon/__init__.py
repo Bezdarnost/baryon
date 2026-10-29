@@ -19,6 +19,7 @@ from baryon._baryon import (
     jxl_to_jpeg,
     open,  # noqa: A004 - mirrors the familiar ``PIL.Image.open`` entry point
     open_all,
+    save_all,
     set_num_threads,
     to_jxl_all,
     to_numpy_all,
@@ -35,6 +36,7 @@ __all__ = [
     "jxl_to_jpeg",
     "open",
     "open_all",
+    "save_all",
     "set_num_threads",
     "to_jxl_all",
     "to_numpy_all",

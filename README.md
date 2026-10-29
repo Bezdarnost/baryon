@@ -72,12 +72,15 @@ batch = baryon.to_numpy_all([im.crop(0, 0, 512, 512) for im in images])  # decod
 
 ## Format support
 
-| Format  | Decode | Partial decode today                              | Planned                                                     |
-|---------|:------:|---------------------------------------------------|-------------------------------------------------------------|
-| JPEG XL | ✅ + write | tile decoding: only groups overlapping the region | progressive previews, region decode for rotated files |
-| PNG     | ✅     | row streaming: stops after the last needed row    | —                                                           |
-| JPEG    | ✅     | full decode, then trim                            | MCU skipping, DCT-domain downscale (1/2–1/8)                |
-| AVIF    | 🔜     | —                                                 | grid/tile-aware decode                                      |
+| Format  | Read | Write | Partial decode today                              | Planned                                               |
+|---------|:----:|:-----:|---------------------------------------------------|-------------------------------------------------------|
+| JPEG XL | ✅   | ✅    | tile decoding: only groups overlapping the region | progressive previews, region decode for rotated files |
+| PNG     | ✅   | ✅    | row streaming: stops after the last needed row    | —                                                     |
+| JPEG    | ✅   | ✅    | full decode, then trim                            | MCU skipping, DCT-domain downscale (1/2–1/8)          |
+| AVIF    | 🔜   | —     | —                                                 | grid/tile-aware decode                                |
+
+`image.save("out.jxl")` picks the format from the extension, and `baryon.save_all(images,
+paths)` converts many files on all cores. EXIF orientation is applied automatically.
 
 ### JPEG XL
 
@@ -97,7 +100,7 @@ assert baryon.jxl_to_jpeg(jxl) == open("photo.jpg", "rb").read()
 ```
 
 8-bit images decode to `uint8`; higher bit depths and float images to full-range `uint16`.
-Orientation is applied automatically. See the
+See the
 [JPEG XL guide](https://bezdarnost.github.io/baryon/guide/jpeg-xl/) for measurements on a
 47 GB dataset and when to convert, and the
 [benchmarks](https://bezdarnost.github.io/baryon/benchmarks/) for comparisons with Pillow,

@@ -17,7 +17,6 @@
 
 mod batch;
 mod codecs;
-#[cfg(feature = "jxl-encode")]
 mod encode;
 mod exif;
 mod geometry;
@@ -29,6 +28,7 @@ pub use baryon_core::{BoxError, Error, Executor, Format, MediaType, Result};
 pub use codecs::{ImageInfo, RegionStrategy, RegionSupport};
 #[cfg(feature = "jxl-encode")]
 pub use encode::{JxlOptions, JxlQuality, encode_pixels, jxl_to_jpeg};
+pub use encode::{PngCompression, encode_jpeg, encode_png};
 pub use geometry::{Orientation, Rect, Rotation};
 pub use image::{ColorType, Image, PixelBuffer, SampleType};
 pub use ops::{Op, ResizeFilter};

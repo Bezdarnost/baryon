@@ -90,6 +90,44 @@ def to_jxl_all(
         One encoded file per image, in input order.
     """
 
+def save_all(
+    images: Sequence[Image],
+    paths: Sequence[str | os.PathLike[str]],
+    *,
+    format: str | None = None,
+    quality: int | None = None,
+    compression: Literal["fast", "balanced", "high"] | None = None,
+    lossless: bool | None = None,
+    distance: float | None = None,
+    effort: int | None = None,
+    transcode_jpeg: bool | None = None,
+) -> None:
+    """Encodes many images and writes them to files, in parallel on all threads.
+
+    This is the fastest way to convert a dataset: decoding, encoding and writing all run
+    concurrently, the largest images first. Formats and options work as in
+    :meth:`Image.save`; each file's format comes from its own extension unless ``format`` is
+    given.
+
+    Args:
+        images: The images to write.
+        paths: One destination per image.
+        format: The format of every file, overriding the extensions.
+        quality: JPEG quality; see :meth:`Image.save`.
+        compression: PNG compression; see :meth:`Image.save`.
+        lossless: JPEG XL option; see :meth:`Image.to_jxl`.
+        distance: JPEG XL option; see :meth:`Image.to_jxl`.
+        effort: JPEG XL option; see :meth:`Image.to_jxl`.
+        transcode_jpeg: JPEG XL option; see :meth:`Image.to_jxl`.
+
+    Raises:
+        ValueError: ``images`` and ``paths`` differ in length, a format cannot be determined,
+            or an option does not apply to a file's format. Nothing is written in that case.
+
+    If writing any image fails, the others are still written and the first failure is raised
+    with its position prefixed to the message, e.g. ``images[3]: ...``.
+    """
+
 def jxl_to_jpeg(source: Source) -> bytes:
     """Restores the original JPEG file from a JPEG XL file made by lossless JPEG transcoding.
 
@@ -243,6 +281,64 @@ class Image:
             EncodeError: The encoder failed, or the JPEG cannot be transcoded losslessly (pass
                 ``transcode_jpeg=False`` to encode its pixels instead).
             ValueError: ``distance`` or ``effort`` is out of range.
+        """
+    def to_png(self, *, compression: Literal["fast", "balanced", "high"] = "balanced") -> bytes:
+        """Encodes the image, with its pending transformations, as a PNG file.
+
+        PNG is lossless; 16-bit images stay 16-bit.
+
+        Args:
+            compression: ``"fast"``, ``"balanced"`` (default) or ``"high"``. ``"fast"`` is
+                several times faster for somewhat larger files; ``"high"`` is slower for
+                slightly smaller ones.
+
+        Raises:
+            ValueError: ``compression`` is not one of the names above.
+        """
+    def to_jpeg(self, *, quality: int = 90) -> bytes:
+        """Encodes the image, with its pending transformations, as a JPEG file.
+
+        Args:
+            quality: 1 to 100; 90 (default) is visually close to the original. Below 90 the
+                colour channels are stored at half resolution, as most encoders do.
+
+        Raises:
+            ValueError: ``quality`` is out of range, or the image has an alpha channel or
+                16-bit samples, which JPEG cannot store; use PNG or JPEG XL.
+        """
+    def save(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        format: str | None = None,
+        quality: int | None = None,
+        compression: Literal["fast", "balanced", "high"] | None = None,
+        lossless: bool | None = None,
+        distance: float | None = None,
+        effort: int | None = None,
+        transcode_jpeg: bool | None = None,
+    ) -> None:
+        """Encodes the image, with its pending transformations, and writes it to a file.
+
+        The format comes from the extension (``.jpg``/``.jpeg``, ``.png``, ``.jxl``) unless
+        ``format`` is given. Encoder options apply to one format each, and passing one for
+        another format is an error rather than being silently ignored.
+
+        Args:
+            path: The file to write.
+            format: ``"jpeg"``, ``"png"`` or ``"jxl"``, overriding the extension.
+            quality: JPEG quality; see :meth:`to_jpeg`.
+            compression: PNG compression; see :meth:`to_png`.
+            lossless: JPEG XL option; see :meth:`to_jxl`.
+            distance: JPEG XL option; see :meth:`to_jxl`.
+            effort: JPEG XL option; see :meth:`to_jxl`.
+            transcode_jpeg: JPEG XL option; see :meth:`to_jxl`.
+
+        Raises:
+            ValueError: The format cannot be determined, an option does not apply to it, or
+                it cannot store this image (JPEG has no alpha channel and no 16-bit samples).
+            EncodeError: The encoder failed.
+            OSError: The file could not be written.
         """
     def __array__(
         self, dtype: npt.DTypeLike | None = None, copy: bool | None = None

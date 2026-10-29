@@ -15,8 +15,13 @@ All notable changes to baryon are documented here. The format follows
   needed row.
 - JPEG XL encoding with the vendored libjxl: `Image.to_jxl`, `to_jxl_all` and `jxl_to_jpeg`.
   Untransformed JPEGs are transcoded losslessly (about 20% smaller, restorable bit for bit).
+- PNG and JPEG encoding (`Image.to_png`, `Image.to_jpeg`), `Image.save` with the format taken
+  from the extension, and `save_all` to convert many files on all cores.
+- EXIF orientation of JPEG and PNG files is applied, fused with the pipeline's own rotations.
+  JPEGs and their JPEG XL transcodes now display identically.
 - Multi-core execution on a shared thread pool: `open_all`, `to_numpy_all`,
   `set_num_threads` / `get_num_threads` (`BARYON_NUM_THREADS`); fork-safe for data loaders.
+  Batches start the largest images first, so one big image does not finish alone.
 - Rotation is clockwise by default; `rotate(degrees, clockwise=False)` matches Pillow and
   `numpy.rot90`.
 - Zero-copy NumPy output, `numpy.asarray(image)` support, typed stubs, free-threaded Python

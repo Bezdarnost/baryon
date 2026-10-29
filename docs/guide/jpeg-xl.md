@@ -94,11 +94,11 @@ import baryon
 paths = sorted(Path("dataset").rglob("*.jpg"))
 for start in range(0, len(paths), 256):
     chunk = paths[start : start + 256]
-    for path, jxl in zip(chunk, baryon.to_jxl_all(baryon.open_all(chunk)), strict=True):
-        path.with_suffix(".jxl").write_bytes(jxl)
+    baryon.save_all(baryon.open_all(chunk), [p.with_suffix(".jxl") for p in chunk])
 ```
 
-`to_jxl_all` raises on the first file that fails, naming its position; convert one file at a
-time with `Image.to_jxl` if you want to skip failures (for example the rare JPEG that cannot
-be transcoded) and keep going. `benchmarks/bench_convert.py` converts a sample of your data
+`save_all` decodes, encodes and writes on every thread, largest files first. If a file fails,
+the rest of the chunk is still written and the first failure is raised, naming its position;
+use `Image.save` one file at a time if you want to skip failures (for example the rare JPEG
+that cannot be transcoded) and keep going. `benchmarks/bench_convert.py` converts a sample of your data
 and verifies every file, so you can check the savings before converting everything.
