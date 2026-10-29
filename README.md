@@ -81,28 +81,33 @@ batch = baryon.to_numpy_all([im.crop(0, 0, 512, 512) for im in images])  # decod
 
 ### JPEG XL
 
-JPEG XL is baryon's flagship format. It is coded in independent groups (256×256 pixels by
-default), so a crop is handed straight to the decoder, which renders only the groups it
-touches. Decoding uses [jxl-oxide](https://github.com/tirr-c/jxl-oxide) (pure Rust) with
-`moxcms` colour management. 8-bit images decode to `uint8`; higher bit depths and float images
-decode to full-range `uint16`. The orientation stored in the file is applied automatically.
-Only the first frame of an animation is decoded, and CMYK images are not supported yet.
+JPEG XL is baryon's flagship format, for reading and writing:
 
-What a 256×256 crop costs compared with decoding the whole image (synthetic 4096×4096 image,
-release build, best of three runs on one machine; treat these as illustrative):
+- **Reading:** whole images decode with [jxl-rs](https://github.com/libjxl/jxl-rs) (the
+  decoder in Chrome and Firefox), as fast as the libjxl reference decoder. Crops decode with
+  [jxl-oxide](https://github.com/tirr-c/jxl-oxide), which renders only the 256×256 groups the
+  crop touches: 6.8× faster than libjxl's full decode on 16-megapixel photos.
+- **Writing:** `image.to_jxl()` uses the vendored libjxl. JPEGs are transcoded losslessly,
+  about 20% smaller and restorable bit for bit with `baryon.jxl_to_jpeg`; PNGs shrink by
+  about 30% with every pixel preserved.
 
-| Source            | Full decode | Crop at the center | Crop at the top |
-|-------------------|------------:|-------------------:|----------------:|
-| JPEG XL (lossy)   | 344 ms      | 11.6 ms (30×)      | 8.6 ms (40×)    |
-| PNG               | 80 ms       | 37 ms (2×)         | 4.5 ms (18×)    |
+```python
+jxl = baryon.open("photo.jpg").to_jxl()  # lossless, ~20% smaller
+assert baryon.jxl_to_jpeg(jxl) == open("photo.jpg", "rb").read()
+```
 
-Files with a non-default orientation are currently decoded in full and then cropped, until test
-fixtures for rotated files are in place.
+8-bit images decode to `uint8`; higher bit depths and float images to full-range `uint16`.
+Orientation is applied automatically. See the
+[JPEG XL guide](https://bezdarnost.github.io/baryon/guide/jpeg-xl/) for measurements on a
+47 GB dataset and when to convert, and the
+[benchmarks](https://bezdarnost.github.io/baryon/benchmarks/) for comparisons with Pillow,
+OpenCV, pyvips, imagecodecs and pillow-jxl.
 
 ## Roadmap
 
-Images come first, with JPEG XL as the flagship format: JPEG XL encoding and lossless JPEG
-transcoding, faster full-image JPEG XL decoding, JPEG region decoding, then AVIF and WebP.
+Images come first, with JPEG XL as the flagship format: JPEG region decoding and DCT-domain
+downscaling, region decoding for rotated JPEG XL files, progressive previews, then AVIF and
+WebP.
 **Video and audio** are planned on the same foundation: lazy frame and time ranges pushed into
 the decoder, batched across cores, returned as NumPy arrays. See the
 [roadmap](https://bezdarnost.github.io/baryon/roadmap/).

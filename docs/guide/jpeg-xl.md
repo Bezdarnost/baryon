@@ -40,40 +40,65 @@ file; the whole 46 GB took 9 minutes on 16 cores). For PNG, effort controls the 
 
 ## Reading speed
 
-JPEG XL decoding does more work per pixel than JPEG, and full-image decoding in baryon is
-currently slower than libjxl's. Crops are where JPEG XL wins:
+One thread, median 16-megapixel photo (see [Benchmarks](../benchmarks.md) for all numbers):
 
-| Read, one thread, median 16 MP image | Full image | 512×512 crop |
+| Read | Full image | 512×512 crop |
 |---|---:|---:|
-| JPEG (baryon) | 83 ms | 85 ms |
-| JPEG XL transcoded from that JPEG (baryon) | 503 ms | **25 ms** |
-| JPEG XL (libjxl via imagecodecs) | 180 ms | 182 ms |
+| the JPEG (baryon) | 85 ms | 84 ms |
+| the same photo as lossless JPEG XL (baryon) | 152 ms | **23 ms** |
+| the same JPEG XL with libjxl (imagecodecs) | 156 ms | 158 ms |
 
-Faster full-image JPEG XL decoding is the top item on the [roadmap](../roadmap.md); the
-[benchmarks](../benchmarks.md) page tracks multi-core numbers.
+- Full-image JPEG XL decoding in baryon is as fast as libjxl, the reference decoder. It does
+  more work per pixel than JPEG, so a full decode costs about 1.8× the JPEG's.
+- Crops decode only the tiles they touch: 3.6× faster than decoding the JPEG and 6.8× faster
+  than libjxl, which has no region decoding.
+- Decoding scales across cores: 47 full 16-megapixel JPEG XL images per second on 16 threads.
 
 ## Recommendation
 
 **Store datasets as JPEG XL when:**
 
-- storage or bandwidth matters: transcoding saves ~20% on JPEGs at zero quality cost and is
-  reversible, so the originals can always be restored;
+- storage or bandwidth matters: transcoding saves about 20% on JPEGs at zero quality cost and
+  is reversible, so the original JPEGs can always be restored;
 - training reads crops or tiles of large images: decoding only the touched tiles is several
-  times faster than any full decode;
-- the data is lossless (PNG, scans, renders, medical, satellite): ~30% smaller at effort 7.
+  times faster than decoding the JPEG;
+- the data is lossless (PNG, scans, renders, medical, satellite): about 30% smaller at the
+  default effort, with every pixel preserved.
 
-**Keep JPEG for now when** the pipeline decodes every image in full at high throughput and
-CPU, not storage, is the bottleneck; full-image JPEG XL decoding costs more CPU today.
+**Keep JPEG when** a pipeline decodes every image in full at high throughput and CPU, not
+storage or I/O, is the bottleneck: a full JPEG XL decode costs about 1.8× the CPU of the JPEG.
 
-**How to convert today:** baryon does not encode yet (it is on the roadmap). Use libjxl's
-`cjxl` (lossless JPEG transcoding is its default for JPEG input), or from Python:
+**Keep the few JPEGs libjxl cannot transcode** (about 1% in our dataset) as JPEG; encoding
+their pixels instead would make them larger.
+
+## Converting with baryon
 
 ```python
-import imagecodecs
+import baryon
 
-jxl = imagecodecs.jpegxl_encode_jpeg(open("photo.jpg", "rb").read())  # lossless, ~20% smaller
-original = imagecodecs.jpegxl_decode_jpeg(jxl)  # bit-exact JPEG back
+jxl = baryon.open("photo.jpg").to_jxl()  # lossless transcoding, about 20% smaller
+assert baryon.jxl_to_jpeg(jxl) == open("photo.jpg", "rb").read()  # bit-exact restore
+
+jxl = baryon.open("render.png").to_jxl()  # lossless pixels, about 30% smaller
+jxl = baryon.open("render.png").to_jxl(effort=3)  # faster, slightly larger
+jxl = baryon.open("photo.jpg").resize(1024, 768).to_jxl(lossless=False)  # lossy thumbnail
 ```
 
-`benchmarks/bench_convert.py` converts a directory sample and verifies every file, so you can
-check the savings on your own data before converting everything.
+Converting a whole directory on every core:
+
+```python
+from pathlib import Path
+
+import baryon
+
+paths = sorted(Path("dataset").rglob("*.jpg"))
+for start in range(0, len(paths), 256):
+    chunk = paths[start : start + 256]
+    for path, jxl in zip(chunk, baryon.to_jxl_all(baryon.open_all(chunk)), strict=True):
+        path.with_suffix(".jxl").write_bytes(jxl)
+```
+
+`to_jxl_all` raises on the first file that fails, naming its position; convert one file at a
+time with `Image.to_jxl` if you want to skip failures (for example the rare JPEG that cannot
+be transcoded) and keep going. `benchmarks/bench_convert.py` converts a sample of your data
+and verifies every file, so you can check the savings before converting everything.

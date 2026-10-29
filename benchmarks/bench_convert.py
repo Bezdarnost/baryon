@@ -36,12 +36,14 @@ if TYPE_CHECKING:
 CONVERTERS = ("baryon", "imagecodecs", "pillow-jxl")
 
 
-def converter(lib: str, effort: int) -> Callable[[Path], bytes]:
+def converter(lib: str, effort: int, threads: int) -> Callable[[Path], bytes]:
     """Return a function converting one file to JPEG XL with a single encoder thread."""
     if lib == "baryon":
         import baryon  # noqa: PLC0415
 
-        baryon.set_num_threads(1)
+        # baryon's pool bounds all of its work, including calls from several Python threads,
+        # so it must be as large as the number of files converted at once.
+        baryon.set_num_threads(threads)
 
         def convert(path: Path) -> bytes:
             # JPEGs are transcoded losslessly, everything else is encoded from lossless pixels.
@@ -99,7 +101,7 @@ def verify(original: bytes, jxl: bytes) -> bool:
 
 def worker(lib: str, threads: int, effort: int, files: list[str], out: Path) -> None:
     """Convert every file with one library and write timings, sizes and checks to ``out``."""
-    convert = converter(lib, effort)
+    convert = converter(lib, effort, threads)
     paths = [Path(f) for f in files]
     convert(paths[0])  # warm-up
 

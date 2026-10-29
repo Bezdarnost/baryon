@@ -31,8 +31,8 @@ signal where time ranges and resampling play the role of crops and resizes.
 - [x] JPEG, PNG and JPEG XL decoding
 - [x] lazy pipelines with region pushdown (JPEG XL tiles, PNG rows)
 - [x] all cores: shared pool, batch decoding, fork-safe
-- [ ] lossless JPEG → JPEG XL conversion and JPEG XL encoding
-- [ ] faster full-image JPEG XL decoding
+- [x] JPEG XL encoding and lossless JPEG → JPEG XL transcoding (libjxl)
+- [x] full-image JPEG XL decoding as fast as libjxl (jxl-rs)
 - [ ] JPEG: skip blocks outside a crop, decode at 1/2, 1/4 and 1/8 scale
 - [ ] JPEG XL: region decoding for rotated files, progressive previews
 - [ ] EXIF orientation and ICC colour management for JPEG and PNG
