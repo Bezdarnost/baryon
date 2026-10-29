@@ -13,8 +13,13 @@ arrays = baryon.to_numpy_all(crops)  # parallel decode, input order
 ```
 
 `to_numpy_all` releases the GIL once for the whole batch and spreads images over every
-thread. If an image fails, the error names its position, e.g.
-`DecodeError: images[17]: failed to decode jxl image: ...`.
+thread. The largest images start first (their sizes are known from the headers), so a big
+photo never starts last and keeps the other threads waiting; on mixed photo sizes this alone
+raised 16-thread JPEG throughput by about 15%. If an image fails, the error names its
+position, e.g. `DecodeError: images[17]: failed to decode jxl image: ...`.
+
+`to_jxl_all` and `save_all` schedule the same way, and `save_all` also writes the files from
+the worker threads.
 
 ## Single large images
 
@@ -36,6 +41,35 @@ baryon.get_num_threads()
 
 or set `BARYON_NUM_THREADS` before the first decode. The setting bounds everything baryon
 runs, including JPEG XL decoding and resizing.
+
+## Hardware
+
+Wheels are built for the baseline of each architecture (x86-64, ARM64) and pick faster code
+paths at runtime, so one wheel runs at full speed on any Intel, AMD or ARM CPU:
+
+| Component | x86-64 | ARM64 |
+|---|---|---|
+| JPEG decoding (zune-jpeg) | SSE4.1, AVX2 | NEON |
+| full JPEG XL decoding (jxl-rs) | SSE4.2, AVX2, AVX-512 | NEON |
+| JPEG XL region decoding (jxl-oxide) | SSE4.1, AVX2 + FMA | NEON |
+| JPEG XL encoding (libjxl via Highway) | SSE4, AVX2, AVX-512 | NEON |
+| resizing (fast_image_resize) | SSE4.1, AVX2 | NEON |
+| JPEG encoding (jpeg-encoder) | AVX2 | scalar |
+
+A build for the exact CPU (`RUSTFLAGS="-C target-cpu=native"`) was at most 3% faster on a
+Ryzen 9 9950X, so building from source for speed is not worth it.
+
+**SMT (Hyper-Threading).** The default uses every logical CPU. On a 16-core, 32-thread Ryzen
+9 9950X, JPEG XL batches decode 25% faster on 32 threads than on 16, while JPEG and PNG
+batches are about 5% slower, because their decoders are limited by each core's cache and
+memory bandwidth rather than by execution units. If you only decode JPEG or PNG,
+`set_num_threads` with the number of physical cores is slightly faster. Intel hybrid CPUs
+(P-cores and E-cores) need no tuning: idle threads steal work, so faster cores simply finish
+more images.
+
+**Scaling.** Batch throughput grows almost linearly up to about 8 threads; beyond that, memory
+bandwidth and lower all-core clock speeds take over. JPEG batches reached about 6× on 8 threads
+and 9× on 16 threads of a 9950X.
 
 ## Data loaders and multiprocessing
 
